@@ -1,5 +1,5 @@
 import { I18n } from '@aws-amplify/core';
-import { Component, Prop, h, State, Watch } from '@stencil/core';
+import { Component, Prop, h, State, Watch, Host } from '@stencil/core';
 import {
   FormFieldTypes,
   FormFieldType,
@@ -8,7 +8,13 @@ import {
 } from '../amplify-auth-fields/amplify-auth-fields-interface';
 import { NO_AUTH_MODULE_FOUND, COUNTRY_DIAL_CODE_DEFAULT } from '../../common/constants';
 import { Translations } from '../../common/Translations';
-import { AuthState, CognitoUserInterface, AuthStateHandler, UsernameAliasStrings } from '../../common/types/auth-types';
+import {
+  AuthState,
+  CognitoUserInterface,
+  AuthStateHandler,
+  UsernameAliasStrings,
+  SignUpAttributes,
+} from '../../common/types/auth-types';
 
 import { Auth } from '@aws-amplify/auth';
 import {
@@ -19,6 +25,7 @@ import {
   composePhoneNumberInput,
   handlePhoneNumberChange,
 } from '../../common/helpers';
+import { handleSignIn } from '../../common/auth-helpers';
 
 @Component({
   tag: 'amplify-confirm-sign-up',
@@ -28,9 +35,9 @@ export class AmplifyConfirmSignUp {
   /** Fires when sign up form is submitted */
   @Prop() handleSubmit: (submitEvent: Event) => void = event => this.confirmSignUp(event);
   /** Used for header text in confirm sign up component */
-  @Prop() headerText: string = I18n.get(Translations.CONFIRM_SIGN_UP_HEADER_TEXT);
+  @Prop() headerText: string = Translations.CONFIRM_SIGN_UP_HEADER_TEXT;
   /** Used for the submit button text in confirm sign up component */
-  @Prop() submitButtonText: string = I18n.get(Translations.CONFIRM_SIGN_UP_SUBMIT_BUTTON_TEXT);
+  @Prop() submitButtonText: string = Translations.CONFIRM_SIGN_UP_SUBMIT_BUTTON_TEXT;
   /**
    * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc.
    * by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing
@@ -59,9 +66,9 @@ export class AmplifyConfirmSignUp {
 
   @State() code: string;
   @State() loading: boolean = false;
-  @State() userInput: string = this.user ? this.user.username : null;
+  @State() userInput: string;
 
-  private _signUpAttrs = this.user && this.user.signUpAttrs ? this.user.signUpAttrs : null;
+  private _signUpAttrs: SignUpAttributes;
   private newFormFields: FormFieldTypes | string[] = [];
   private phoneNumber: PhoneNumberInterface = {
     countryDialCodeValue: COUNTRY_DIAL_CODE_DEFAULT,
@@ -69,12 +76,24 @@ export class AmplifyConfirmSignUp {
   };
 
   componentWillLoad() {
-    checkUsernameAlias(this.usernameAlias);
-    this.buildFormFields();
+    this.setup();
   }
 
   @Watch('formFields')
   formFieldsHandler() {
+    this.buildFormFields();
+  }
+
+  @Watch('user')
+  userHandler() {
+    this.setup();
+  }
+
+  private setup() {
+    // TODO: Use optional chaining instead
+    this.userInput = this.user && this.user.username;
+    this._signUpAttrs = this.user && this.user.signUpAttrs;
+    checkUsernameAlias(this.usernameAlias);
     this.buildFormFields();
   }
 
@@ -182,7 +201,8 @@ export class AmplifyConfirmSignUp {
       throw new Error(NO_AUTH_MODULE_FOUND);
     }
     try {
-      if (!this.userInput) throw new Error('Username can not be empty');
+      if (!this.userInput) throw new Error(Translations.EMPTY_USERNAME);
+      this.userInput = this.userInput.trim();
       await Auth.resendSignUp(this.userInput);
       this.handleAuthStateChange(AuthState.ConfirmSignUp);
     } catch (error) {
@@ -213,10 +233,19 @@ export class AmplifyConfirmSignUp {
         break;
     }
     try {
+      if (!this.userInput) throw new Error(Translations.EMPTY_USERNAME);
+      this.userInput = this.userInput.trim();
       const confirmSignUpResult = await Auth.confirmSignUp(this.userInput, this.code);
-      const user =
-        confirmSignUpResult && this._signUpAttrs && (await Auth.signIn(this.userInput, this._signUpAttrs.password));
-      this.handleAuthStateChange(AuthState.SignedIn, user);
+
+      if (!confirmSignUpResult) {
+        throw new Error(I18n.get(Translations.CONFIRM_SIGN_UP_FAILED));
+      }
+      if (this._signUpAttrs && this._signUpAttrs.password && this._signUpAttrs.password !== '') {
+        // Auto sign in user if password is available from previous workflow
+        await handleSignIn(this.userInput, this._signUpAttrs.password, this.handleAuthStateChange);
+      } else {
+        this.handleAuthStateChange(AuthState.SignIn);
+      }
     } catch (error) {
       dispatchToastHubEvent(error);
     } finally {
@@ -226,22 +255,25 @@ export class AmplifyConfirmSignUp {
 
   render() {
     return (
-      <amplify-form-section
-        headerText={this.headerText}
-        submitButtonText={this.submitButtonText}
-        handleSubmit={this.handleSubmit}
-        secondaryFooterContent={
-          <div>
-            <span>
-              <amplify-button variant="anchor" onClick={() => this.handleAuthStateChange(AuthState.SignIn)}>
-                {I18n.get(Translations.BACK_TO_SIGN_IN)}
-              </amplify-button>
-            </span>
-          </div>
-        }
-      >
-        <amplify-auth-fields formFields={this.newFormFields} />
-      </amplify-form-section>
+      <Host>
+        <amplify-form-section
+          headerText={I18n.get(this.headerText)}
+          submitButtonText={I18n.get(this.submitButtonText)}
+          handleSubmit={this.handleSubmit}
+          loading={this.loading}
+          secondaryFooterContent={
+            <div>
+              <span>
+                <amplify-button variant="anchor" onClick={() => this.handleAuthStateChange(AuthState.SignIn)}>
+                  {I18n.get(Translations.BACK_TO_SIGN_IN)}
+                </amplify-button>
+              </span>
+            </div>
+          }
+        >
+          <amplify-auth-fields formFields={this.newFormFields} />
+        </amplify-form-section>
+      </Host>
     );
   }
 }

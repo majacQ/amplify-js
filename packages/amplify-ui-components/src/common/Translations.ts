@@ -19,10 +19,12 @@ export enum AuthStrings {
   EMAIL_LABEL = 'Email Address *',
   EMAIL_PLACEHOLDER = 'Enter your email address',
   FORGOT_PASSWORD_TEXT = 'Forgot your password?',
-  LESS_THAN_TWO_MFA_VALUES_MESSAGE = 'Less than two mfa types available',
+  LESS_THAN_TWO_MFA_VALUES_MESSAGE = 'Less than two MFA types available',
   NEW_PASSWORD_LABEL = 'New password',
   NEW_PASSWORD_PLACEHOLDER = 'Enter your new password',
   NO_ACCOUNT_TEXT = 'No account?',
+  USERNAME_REMOVE_WHITESPACE = 'Username cannot contain whitespace',
+  PASSWORD_REMOVE_WHITESPACE = 'Password cannot start or end with whitespace',
   PASSWORD_LABEL = 'Password *',
   PASSWORD_PLACEHOLDER = 'Enter your password',
   PHONE_LABEL = 'Phone Number *',
@@ -53,6 +55,7 @@ export enum AuthStrings {
   SUCCESS_MFA_TYPE = 'Success! Your MFA Type is now:',
   TOTP_HEADER_TEXT = 'Scan then enter verification code',
   TOTP_LABEL = 'Enter Security Code:',
+  TOTP_ISSUER = 'AWSCognito',
   TOTP_SETUP_FAILURE = 'TOTP Setup has failed',
   TOTP_SUBMIT_BUTTON_TEXT = 'Verify Security Token',
   TOTP_SUCCESS_MESSAGE = 'Setup TOTP successfully!',
@@ -95,7 +98,7 @@ export enum AuthStrings {
   NAME_LABEL = 'Full Name',
   NAME_PLACEHOLDER = 'Enter your full name',
   PHOTO_PICKER_TITLE = 'Picker Title',
-  PHOTO_PICKER_HINT = 'Ancilliary text or content may occupy this space here',
+  PHOTO_PICKER_HINT = 'Ancillary text or content may occupy this space here',
   PHOTO_PICKER_PLACEHOLDER_HINT = 'Placeholder hint',
   PHOTO_PICKER_BUTTON_TEXT = 'Button',
   IMAGE_PICKER_TITLE = 'Add Profile Photo',
@@ -104,7 +107,17 @@ export enum AuthStrings {
   IMAGE_PICKER_BUTTON_TEXT = 'Upload',
   PICKER_TEXT = 'Pick a file',
   TEXT_FALLBACK_CONTENT = 'Fallback Content',
+  CONFIRM_SIGN_UP_FAILED = 'Confirm Sign Up Failed',
+  SIGN_UP_FAILED = 'Sign Up Failed',
 }
 
-type Translations = AuthErrorStrings | AuthStrings;
-export const Translations = { ...AuthStrings, ...AuthErrorStrings };
+export enum InteractionsStrings {
+  CHATBOT_TITLE = 'ChatBot Lex',
+  TEXT_INPUT_PLACEHOLDER = 'Write a message',
+  VOICE_INPUT_PLACEHOLDER = 'Click mic to speak',
+  CHAT_DISABLED_ERROR = 'Error: Either voice or text must be enabled for the chatbot',
+  NO_BOT_NAME_ERROR = 'Error: Bot name must be provided to ChatBot',
+}
+
+type Translations = AuthErrorStrings | AuthStrings | InteractionsStrings;
+export const Translations = { ...AuthStrings, ...AuthErrorStrings, ...InteractionsStrings };
