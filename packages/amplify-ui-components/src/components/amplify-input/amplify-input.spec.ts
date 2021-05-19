@@ -27,7 +27,7 @@ describe('amplify-input spec:', () => {
         html: `<div></div>`,
       });
 
-      let cmp = page.doc.createElement('amplify-input');
+      const cmp = page.doc.createElement('amplify-input');
       (cmp as any).inputProps = {
         autocomplete: 'off',
         min: '3',
@@ -59,6 +59,10 @@ describe('amplify-input spec:', () => {
 
     it('should have `type` set to `text` by default', () => {
       expect(input.type).toEqual('text');
+    });
+
+    it('`formSubmit` should be defined', () => {
+      expect(input.formSubmit).toBeDefined();
     });
   });
 });

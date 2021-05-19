@@ -15,13 +15,14 @@ const logger = new Logger('amplify-auth0-button');
 export class AmplifyAuth0Button {
   /** See: https://auth0.com/docs/libraries/auth0js/v9#available-parameters */
   @Prop() config: FederatedConfig['auth0Config'];
+  /** Auth state change handler for this component */
   @Prop() handleAuthStateChange: AuthStateHandler = dispatchAuthStateChangeEvent;
 
-  _auth0: any;
+  private _auth0: any;
 
-  handleLoad = () => {
+  private handleLoad = () => {
     // @ts-ignore Property 'auth0' does not exist on type '{}'.
-    const { oauth = {} } = Auth.configure({});
+    const { oauth = {} } = Auth.configure();
     // @ts-ignore Property 'auth0' does not exist on type '{}'.
     const { config = oauth.auth0 } = this;
 
@@ -88,7 +89,7 @@ export class AmplifyAuth0Button {
     });
   };
 
-  signInWithAuth0(event) {
+  private signInWithAuth0(event) {
     event.preventDefault();
 
     if (!this._auth0) {

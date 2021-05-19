@@ -1,3 +1,7 @@
+import { Buffer } from 'buffer';
+import CryptoJS from 'crypto-js/core';
+import { monotonicFactory, ULID } from 'ulid';
+import { v4 as uuid } from 'uuid';
 import { ModelInstanceCreator } from './datastore/datastore';
 import {
 	AllOperators,
@@ -12,14 +16,18 @@ import {
 	RelationshipType,
 	RelationType,
 	SchemaNamespace,
+	SortPredicatesGroup,
+	SortDirection,
 } from './types';
-
-import { v4 as uuid } from 'uuid';
 
 export const exhaustiveCheck = (obj: never, throwOnError: boolean = true) => {
 	if (throwOnError) {
 		throw new Error(`Invalid ${obj}`);
 	}
+};
+
+export const isNullOrUndefined = (val: any): boolean => {
+	return typeof val === 'undefined' || val === undefined || val === null;
 };
 
 export const validatePredicate = <T extends PersistentModel>(
@@ -134,7 +142,9 @@ export const establishRelation = (
 					modelName: fieldAttribute.type.model,
 					relationType: connectionType,
 					targetName: fieldAttribute.association['targetName'],
+					associatedWith: fieldAttribute.association['associatedWith'],
 				});
+
 				if (connectionType === 'BELONGS_TO') {
 					relationship[mKey].indexes.push(
 						fieldAttribute.association['targetName']
@@ -142,6 +152,24 @@ export const establishRelation = (
 				}
 			}
 		});
+
+		// create indexes from key fields
+		if (model.attributes) {
+			model.attributes.forEach(attribute => {
+				if (attribute.type === 'key') {
+					const { fields } = attribute.properties;
+					if (fields) {
+						fields.forEach(field => {
+							// only add index if it hasn't already been added
+							const exists = relationship[mKey].indexes.includes(field);
+							if (!exists) {
+								relationship[mKey].indexes.push(field);
+							}
+						});
+					}
+				}
+			});
+		}
 	});
 
 	return relationship;
@@ -282,6 +310,14 @@ export const getIndex = (rel: RelationType[], src: string): string => {
 	return index;
 };
 
+export const getIndexFromAssociation = (
+	indexes: string[],
+	src: string
+): string => {
+	const index = indexes.find(idx => idx === src);
+	return index;
+};
+
 export enum NAMESPACES {
 	DATASTORE = 'datastore',
 	USER = 'user',
@@ -335,4 +371,118 @@ export const isPrivateMode = () => {
 		db.onerror = isPrivate;
 		db.onsuccess = isNotPrivate;
 	});
+};
+
+const randomBytes = function(nBytes: number): Buffer {
+	return Buffer.from(CryptoJS.lib.WordArray.random(nBytes).toString(), 'hex');
+};
+const prng = () => randomBytes(1).readUInt8(0) / 0xff;
+export function monotonicUlidFactory(seed?: number): ULID {
+	const ulid = monotonicFactory(prng);
+
+	return () => {
+		return ulid(seed);
+	};
+}
+
+/**
+ * Uses performance.now() if available, otherwise, uses Date.now() (e.g. react native without a polyfill)
+ *
+ * The values returned by performance.now() always increase at a constant rate,
+ * independent of the system clock (which might be adjusted manually or skewed
+ * by software like NTP).
+ *
+ * Otherwise, performance.timing.navigationStart + performance.now() will be
+ * approximately equal to Date.now()
+ *
+ * See: https://developer.mozilla.org/en-US/docs/Web/API/Performance/now#Example
+ */
+export function getNow() {
+	if (
+		typeof performance !== 'undefined' &&
+		performance &&
+		typeof performance.now === 'function'
+	) {
+		return performance.now() | 0; // convert to integer
+	} else {
+		return Date.now();
+	}
+}
+
+export function sortCompareFunction<T extends PersistentModel>(
+	sortPredicates: SortPredicatesGroup<T>
+) {
+	return function compareFunction(a, b) {
+		// enable multi-field sort by iterating over predicates until
+		// a comparison returns -1 or 1
+		for (const predicate of sortPredicates) {
+			const { field, sortDirection } = predicate;
+
+			// reverse result when direction is descending
+			const sortMultiplier = sortDirection === SortDirection.ASCENDING ? 1 : -1;
+
+			if (a[field] < b[field]) {
+				return -1 * sortMultiplier;
+			}
+
+			if (a[field] > b[field]) {
+				return 1 * sortMultiplier;
+			}
+		}
+
+		return 0;
+	};
+}
+
+export const isAWSDate = (val: string): boolean => {
+	return !!/^\d{4}-\d{2}-\d{2}(Z|[+-]\d{2}:\d{2}($|:\d{2}))?$/.exec(val);
+};
+
+export const isAWSTime = (val: string): boolean => {
+	return !!/^\d{2}:\d{2}(:\d{2}(.\d+)?)?(Z|[+-]\d{2}:\d{2}($|:\d{2}))?$/.exec(
+		val
+	);
+};
+
+export const isAWSDateTime = (val: string): boolean => {
+	return !!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(.\d+)?)?(Z|[+-]\d{2}:\d{2}($|:\d{2}))?$/.exec(
+		val
+	);
+};
+
+export const isAWSTimestamp = (val: number): boolean => {
+	return !!/^\d+$/.exec(String(val));
+};
+
+export const isAWSEmail = (val: string): boolean => {
+	return !!/^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/.exec(
+		val
+	);
+};
+
+export const isAWSJSON = (val: string): boolean => {
+	try {
+		JSON.parse(val);
+		return true;
+	} catch {
+		return false;
+	}
+};
+
+export const isAWSURL = (val: string): boolean => {
+	try {
+		return !!new URL(val);
+	} catch {
+		return false;
+	}
+};
+
+export const isAWSPhone = (val: string): boolean => {
+	return !!/^\+?\d[\d\s-]+$/.exec(val);
+};
+
+export const isAWSIPAddress = (val: string): boolean => {
+	return !!/((^((([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]))$)|(^((([0-9A-Fa-f]{1,4}:){7}([0-9A-Fa-f]{1,4}|:))|(([0-9A-Fa-f]{1,4}:){6}(:[0-9A-Fa-f]{1,4}|((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9A-Fa-f]{1,4}:){5}(((:[0-9A-Fa-f]{1,4}){1,2})|:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3})|:))|(([0-9A-Fa-f]{1,4}:){4}(((:[0-9A-Fa-f]{1,4}){1,3})|((:[0-9A-Fa-f]{1,4})?:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){3}(((:[0-9A-Fa-f]{1,4}){1,4})|((:[0-9A-Fa-f]{1,4}){0,2}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){2}(((:[0-9A-Fa-f]{1,4}){1,5})|((:[0-9A-Fa-f]{1,4}){0,3}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){1}(((:[0-9A-Fa-f]{1,4}){1,6})|((:[0-9A-Fa-f]{1,4}){0,4}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:))|(:(((:[0-9A-Fa-f]{1,4}){1,7})|((:[0-9A-Fa-f]{1,4}){0,5}:((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}))|:)))(%.+)?$))$/.exec(
+		val
+	);
 };

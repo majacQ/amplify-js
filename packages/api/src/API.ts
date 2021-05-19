@@ -10,13 +10,19 @@
  * CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
  * and limitations under the License.
  */
+import { Auth } from '@aws-amplify/auth';
+import Cache from '@aws-amplify/cache';
 import { RestAPIClass } from '@aws-amplify/api-rest';
 import {
 	GraphQLAPIClass,
 	GraphQLOptions,
 	GraphQLResult,
 } from '@aws-amplify/api-graphql';
-import { Amplify, ConsoleLogger as Logger } from '@aws-amplify/core';
+import {
+	Amplify,
+	ConsoleLogger as Logger,
+	Credentials,
+} from '@aws-amplify/core';
 import Observable from 'zen-observable-ts';
 
 const logger = new Logger('API');
@@ -31,8 +37,12 @@ export class APIClass {
 	 * @param {Object} options - Configuration object for API
 	 */
 	private _options;
-	private _restApi;
+	private _restApi: RestAPIClass;
 	private _graphqlApi;
+
+	Auth = Auth;
+	Cache = Cache;
+	Credentials = Credentials;
 
 	/**
 	 * Initialize API with AWS configuration
@@ -42,7 +52,6 @@ export class APIClass {
 		this._options = options;
 		this._restApi = new RestAPIClass(options);
 		this._graphqlApi = new GraphQLAPIClass(options);
-		Amplify.register(this);
 		logger.debug('API Options', this._options);
 	}
 
@@ -57,6 +66,14 @@ export class APIClass {
 	 */
 	configure(options) {
 		this._options = Object.assign({}, this._options, options);
+
+		// Share Amplify instance with client for SSR
+		this._restApi.Credentials = this.Credentials;
+
+		this._graphqlApi.Auth = this.Auth;
+		this._graphqlApi.Cache = this.Cache;
+		this._graphqlApi.Credentials = this.Credentials;
+
 		const restAPIConfig = this._restApi.configure(this._options);
 		const graphQLAPIConfig = this._graphqlApi.configure(this._options);
 
@@ -65,68 +82,85 @@ export class APIClass {
 
 	/**
 	 * Make a GET request
-	 * @param {string} apiName  - The api name of the request
+	 * @param {string} apiName - The api name of the request
 	 * @param {string} path - The path of the request
 	 * @param {json} [init] - Request extra params
 	 * @return {Promise} - A promise that resolves to an object with response status and JSON data, if successful.
 	 */
-	async get(apiName, path, init) {
+	get(apiName, path, init): Promise<any> {
 		return this._restApi.get(apiName, path, init);
 	}
 
 	/**
 	 * Make a POST request
-	 * @param {string} apiName  - The api name of the request
+	 * @param {string} apiName - The api name of the request
 	 * @param {string} path - The path of the request
 	 * @param {json} [init] - Request extra params
 	 * @return {Promise} - A promise that resolves to an object with response status and JSON data, if successful.
 	 */
-	async post(apiName, path, init) {
+	post(apiName, path, init): Promise<any> {
 		return this._restApi.post(apiName, path, init);
 	}
 
 	/**
 	 * Make a PUT request
-	 * @param {string} apiName  - The api name of the request
+	 * @param {string} apiName - The api name of the request
 	 * @param {string} path - The path of the request
 	 * @param {json} [init] - Request extra params
 	 * @return {Promise} - A promise that resolves to an object with response status and JSON data, if successful.
 	 */
-	async put(apiName, path, init) {
+	put(apiName, path, init): Promise<any> {
 		return this._restApi.put(apiName, path, init);
 	}
 
 	/**
 	 * Make a PATCH request
-	 * @param {string} apiName  - The api name of the request
+	 * @param {string} apiName - The api name of the request
 	 * @param {string} path - The path of the request
 	 * @param {json} [init] - Request extra params
 	 * @return {Promise} - A promise that resolves to an object with response status and JSON data, if successful.
 	 */
-	async patch(apiName, path, init) {
+	patch(apiName, path, init): Promise<any> {
 		return this._restApi.patch(apiName, path, init);
 	}
 
 	/**
 	 * Make a DEL request
-	 * @param {string} apiName  - The api name of the request
+	 * @param {string} apiName - The api name of the request
 	 * @param {string} path - The path of the request
 	 * @param {json} [init] - Request extra params
 	 * @return {Promise} - A promise that resolves to an object with response status and JSON data, if successful.
 	 */
-	async del(apiName, path, init) {
+	del(apiName, path, init): Promise<any> {
 		return this._restApi.del(apiName, path, init);
 	}
 
 	/**
 	 * Make a HEAD request
-	 * @param {string} apiName  - The api name of the request
+	 * @param {string} apiName - The api name of the request
 	 * @param {string} path - The path of the request
 	 * @param {json} [init] - Request extra params
 	 * @return {Promise} - A promise that resolves to an object with response status and JSON data, if successful.
 	 */
-	async head(apiName, path, init) {
+	head(apiName, path, init): Promise<any> {
 		return this._restApi.head(apiName, path, init);
+	}
+
+	/**
+	 * Checks to see if an error thrown is from an api request cancellation
+	 * @param {any} error - Any error
+	 * @return {boolean} - A boolean indicating if the error was from an api request cancellation
+	 */
+	isCancel(error) {
+		return this._restApi.isCancel(error);
+	}
+	/**
+	 * Cancels an inflight request
+	 * @param {any} request - request to cancel
+	 * @return {boolean} - A boolean indicating if the request was cancelled
+	 */
+	cancel(request: Promise<any>, message?: string) {
+		return this._restApi.cancel(request, message);
 	}
 
 	/**
@@ -154,10 +188,12 @@ export class APIClass {
 	 * @returns {Promise<GraphQLResult> | Observable<object>}
 	 */
 	graphql(
-		options: GraphQLOptions
+		options: GraphQLOptions,
+		additionalHeaders?: { [key: string]: string }
 	): Promise<GraphQLResult> | Observable<object> {
-		return this._graphqlApi.graphql(options);
+		return this._graphqlApi.graphql(options, additionalHeaders);
 	}
 }
 
 export const API = new APIClass(null);
+Amplify.register(API);

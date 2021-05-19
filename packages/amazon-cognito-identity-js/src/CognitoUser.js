@@ -84,7 +84,7 @@ export default class CognitoUser {
 	 */
 	constructor(data) {
 		if (data == null || data.Username == null || data.Pool == null) {
-			throw new Error('Username and pool information are required.');
+			throw new Error('Username and Pool information are required.');
 		}
 
 		this.username = data.Username || '';
@@ -1133,7 +1133,11 @@ export default class CognitoUser {
 				if (err) {
 					return callback(err, null);
 				}
-				return callback(null, 'SUCCESS');
+
+				// update cached user
+				return this.getUserData(() => callback(null, 'SUCCESS'), {
+					bypassCache: true,
+				});
 			}
 		);
 		return undefined;
@@ -1203,8 +1207,42 @@ export default class CognitoUser {
 	}
 
 	/**
+	 * PRIVATE ONLY: This is an internal only method and should not
+	 * be directly called by the consumers.
+	 */
+	createGetUserRequest() {
+		return this.client.promisifyRequest('GetUser', {
+			AccessToken: this.signInUserSession.getAccessToken().getJwtToken(),
+		});
+	}
+
+	/**
+	 * PRIVATE ONLY: This is an internal only method and should not
+	 * be directly called by the consumers.
+	 */
+	refreshSessionIfPossible(options = {}) {
+		// best effort, if not possible
+		return new Promise(resolve => {
+			const refresh = this.signInUserSession.getRefreshToken();
+			if (refresh && refresh.getToken()) {
+				this.refreshSession(refresh, resolve, options.clientMetadata);
+			} else {
+				resolve();
+			}
+		});
+	}
+
+	/**
+	 * @typedef {Object} GetUserDataOptions 
+	 * @property {boolean} bypassCache - force getting data from Cognito service
+	 * @property {Record<string, string>} clientMetadata - clientMetadata for getSession
+	*/
+
+
+	/**
 	 * This is used by an authenticated users to get the userData
 	 * @param {nodeCallback<UserData>} callback Called on success or error.
+	 * @param {GetUserDataOptions} params
 	 * @returns {void}
 	 */
 	getUserData(callback, params) {
@@ -1213,44 +1251,68 @@ export default class CognitoUser {
 			return callback(new Error('User is not authenticated'), null);
 		}
 
-		const bypassCache = params ? params.bypassCache : false;
+		const userData = this.getUserDataFromCache();
 
-		const userData = this.storage.getItem(this.userDataKey);
-		// get the cached user data
-
-		if (!userData || bypassCache) {
-			this.client.request(
-				'GetUser',
-				{
-					AccessToken: this.signInUserSession.getAccessToken().getJwtToken(),
-				},
-				(err, latestUserData) => {
-					if (err) {
-						return callback(err, null);
-					}
-					this.cacheUserData(latestUserData);
-					const refresh = this.signInUserSession.getRefreshToken();
-					if (refresh && refresh.getToken()) {
-						this.refreshSession(refresh, (refreshError, data) => {
-							if (refreshError) {
-								return callback(refreshError, null);
-							}
-							return callback(null, latestUserData);
-						});
-					} else {
-						return callback(null, latestUserData);
-					}
-				}
-			);
-		} else {
-			try {
-				return callback(null, JSON.parse(userData));
-			} catch (err) {
-				this.clearCachedUserData();
-				return callback(err, null);
-			}
+		if (!userData) {
+			this.fetchUserData()
+				.then(data => {
+					callback(null, data);
+				})
+				.catch(callback);
+			return;
 		}
-		return undefined;
+
+		if (this.isFetchUserDataAndTokenRequired(params)) {
+			this.fetchUserData()
+				.then(data => {
+					return this.refreshSessionIfPossible(params).then(() => data);
+				})
+				.then(data => callback(null, data))
+				.catch(callback);
+			return;
+		}
+
+		try {
+			callback(null, JSON.parse(userData));
+			return;
+		} catch (err) {
+			this.clearCachedUserData();
+			callback(err, null);
+			return;
+		}
+	}
+
+	/**
+	 *
+	 * PRIVATE ONLY: This is an internal only method and should not
+	 * be directly called by the consumers.
+	 */
+	getUserDataFromCache() {
+		const userData = this.storage.getItem(this.userDataKey);
+
+		return userData;
+	}
+
+	/**
+	 *
+	 * PRIVATE ONLY: This is an internal only method and should not
+	 * be directly called by the consumers.
+	 */
+	isFetchUserDataAndTokenRequired(params) {
+		const { bypassCache = false } = params || {};
+
+		return bypassCache;
+	}
+	/**
+	 *
+	 * PRIVATE ONLY: This is an internal only method and should not
+	 * be directly called by the consumers.
+	 */
+	fetchUserData() {
+		return this.createGetUserRequest().then(data => {
+			this.cacheUserData(data);
+			return data;
+		});
 	}
 
 	/**
@@ -1302,13 +1364,19 @@ export default class CognitoUser {
 	}
 
 	/**
+	 * @typedef {Object} GetSessionOptions 
+	 * @property {Record<string, string>} clientMetadata - clientMetadata for getSession
+	*/
+
+	/**
 	 * This is used to get a session, either from the session object
 	 * or from  the local storage, or by using a refresh token
 	 *
 	 * @param {nodeCallback<CognitoUserSession>} callback Called on success or error.
+	 * @param {GetSessionOptions} options
 	 * @returns {void}
 	 */
-	getSession(callback) {
+	getSession(callback, options = {}) {
 		if (this.username == null) {
 			return callback(
 				new Error('Username is null. Cannot retrieve a new session'),
@@ -1320,9 +1388,8 @@ export default class CognitoUser {
 			return callback(null, this.signInUserSession);
 		}
 
-		const keyPrefix = `CognitoIdentityServiceProvider.${this.pool.getClientId()}.${
-			this.username
-		}`;
+		const keyPrefix = `CognitoIdentityServiceProvider.${this.pool.getClientId()}.${this.username
+			}`;
 		const idTokenKey = `${keyPrefix}.idToken`;
 		const accessTokenKey = `${keyPrefix}.accessToken`;
 		const refreshTokenKey = `${keyPrefix}.refreshToken`;
@@ -1347,6 +1414,7 @@ export default class CognitoUser {
 				ClockDrift: clockDrift,
 			};
 			const cachedSession = new CognitoUserSession(sessionData);
+
 			if (cachedSession.isValid()) {
 				this.signInUserSession = cachedSession;
 				return callback(null, this.signInUserSession);
@@ -1359,7 +1427,7 @@ export default class CognitoUser {
 				);
 			}
 
-			this.refreshSession(refreshToken, callback);
+			this.refreshSession(refreshToken, callback, options.clientMetadata);
 		} else {
 			callback(
 				new Error('Local storage is missing an ID Token, Please authenticate'),
@@ -1378,6 +1446,9 @@ export default class CognitoUser {
 	 * @returns {void}
 	 */
 	refreshSession(refreshToken, callback, clientMetadata) {
+		const wrappedCallback = this.pool.wrapRefreshSessionCallback
+			? this.pool.wrapRefreshSessionCallback(callback)
+			: callback;
 		const authParameters = {};
 		authParameters.REFRESH_TOKEN = refreshToken.getToken();
 		const keyPrefix = `CognitoIdentityServiceProvider.${this.pool.getClientId()}`;
@@ -1404,7 +1475,7 @@ export default class CognitoUser {
 				if (err.code === 'NotAuthorizedException') {
 					this.clearCachedUser();
 				}
-				return callback(err, null);
+				return wrappedCallback(err, null);
 			}
 			if (authResult) {
 				const authenticationResult = authResult.AuthenticationResult;
@@ -1420,7 +1491,7 @@ export default class CognitoUser {
 					authenticationResult
 				);
 				this.cacheTokens();
-				return callback(null, this.signInUserSession);
+				return wrappedCallback(null, this.signInUserSession);
 			}
 			return undefined;
 		});
@@ -1481,9 +1552,8 @@ export default class CognitoUser {
 	 * @returns {void}
 	 */
 	cacheDeviceKeyAndPassword() {
-		const keyPrefix = `CognitoIdentityServiceProvider.${this.pool.getClientId()}.${
-			this.username
-		}`;
+		const keyPrefix = `CognitoIdentityServiceProvider.${this.pool.getClientId()}.${this.username
+			}`;
 		const deviceKeyKey = `${keyPrefix}.deviceKey`;
 		const randomPasswordKey = `${keyPrefix}.randomPasswordKey`;
 		const deviceGroupKeyKey = `${keyPrefix}.deviceGroupKey`;
@@ -1498,9 +1568,8 @@ export default class CognitoUser {
 	 * @returns {void}
 	 */
 	getCachedDeviceKeyAndPassword() {
-		const keyPrefix = `CognitoIdentityServiceProvider.${this.pool.getClientId()}.${
-			this.username
-		}`;
+		const keyPrefix = `CognitoIdentityServiceProvider.${this.pool.getClientId()}.${this.username
+			}`;
 		const deviceKeyKey = `${keyPrefix}.deviceKey`;
 		const randomPasswordKey = `${keyPrefix}.randomPasswordKey`;
 		const deviceGroupKeyKey = `${keyPrefix}.deviceGroupKey`;
@@ -1517,9 +1586,8 @@ export default class CognitoUser {
 	 * @returns {void}
 	 */
 	clearCachedDeviceKeyAndPassword() {
-		const keyPrefix = `CognitoIdentityServiceProvider.${this.pool.getClientId()}.${
-			this.username
-		}`;
+		const keyPrefix = `CognitoIdentityServiceProvider.${this.pool.getClientId()}.${this.username
+			}`;
 		const deviceKeyKey = `${keyPrefix}.deviceKey`;
 		const randomPasswordKey = `${keyPrefix}.randomPasswordKey`;
 		const deviceGroupKeyKey = `${keyPrefix}.deviceGroupKey`;
@@ -1831,7 +1899,7 @@ export default class CognitoUser {
 	 * This is used to list all devices for a user
 	 *
 	 * @param {int} limit the number of devices returned in a call
-	 * @param {string} paginationToken the pagination token in case any was returned before
+	 * @param {string | null} paginationToken the pagination token in case any was returned before
 	 * @param {object} callback Result callback map.
 	 * @param {onFailure} callback.onFailure Called on any error.
 	 * @param {onSuccess<*>} callback.onSuccess Called on success with device list.
@@ -1841,21 +1909,21 @@ export default class CognitoUser {
 		if (this.signInUserSession == null || !this.signInUserSession.isValid()) {
 			return callback.onFailure(new Error('User is not authenticated'));
 		}
+		const requestParams = {
+			AccessToken: this.signInUserSession.getAccessToken().getJwtToken(),
+			Limit: limit,
+		};
 
-		this.client.request(
-			'ListDevices',
-			{
-				AccessToken: this.signInUserSession.getAccessToken().getJwtToken(),
-				Limit: limit,
-				PaginationToken: paginationToken,
-			},
-			(err, data) => {
-				if (err) {
-					return callback.onFailure(err);
-				}
-				return callback.onSuccess(data);
+		if (paginationToken) {
+			requestParams.PaginationToken = paginationToken;
+		}
+
+		this.client.request('ListDevices', requestParams, (err, data) => {
+			if (err) {
+				return callback.onFailure(err);
 			}
-		);
+			return callback.onSuccess(data);
+		});
 		return undefined;
 	}
 
@@ -1923,14 +1991,14 @@ export default class CognitoUser {
 			this.Session = data.Session;
 			if (answerChallenge === 'SMS_MFA') {
 				return callback.mfaRequired(
-					data.challengeName,
-					data.challengeParameters
+					data.ChallengeName,
+					data.ChallengeParameters
 				);
 			}
 			if (answerChallenge === 'SOFTWARE_TOKEN_MFA') {
 				return callback.totpRequired(
-					data.challengeName,
-					data.challengeParameters
+					data.ChallengeName,
+					data.ChallengeParameters
 				);
 			}
 			return undefined;

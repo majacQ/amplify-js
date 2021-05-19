@@ -6,22 +6,25 @@ import nodePolyfills from 'rollup-plugin-node-polyfills';
 import { sass } from '@stencil/sass';
 
 export const config: Config = {
-  excludeSrc: [
-    '**/*.e2e.*',
-    '**/*.spec.*',
-    '**/*.stories.*'
-  ],
+  extras: {
+    initializeNextTick: false,
+  },
+  excludeSrc: ['**/*.e2e.*', '**/*.spec.*', '**/*.stories.*'],
   namespace: 'amplify-ui-components',
   plugins: [
     externals({
       // deps to include in externals (default: [])
-      include: ['@aws-amplify/auth', '@aws-amplify/core', '@aws-amplify/storage', '@aws-amplify/xr'],
+      include: [
+        '@aws-amplify/auth',
+        '@aws-amplify/core',
+        '@aws-amplify/storage',
+        '@aws-amplify/xr',
+        '@aws-amplify/interactions',
+      ],
     }),
     nodePolyfills(),
     sass({
-      injectGlobalPaths: [
-        'src/global/breakpoint.scss'
-      ]
+      injectGlobalPaths: ['src/global/breakpoint.scss'],
     }),
   ],
   nodeResolve: {
@@ -56,6 +59,7 @@ export const config: Config = {
       proxiesFile: '../amplify-ui-react/src/components.ts',
     }),
     { type: 'dist' },
+    { type: 'dist-custom-elements-bundle', dir: 'dist/components' },
     { type: 'docs-readme' },
     { type: 'docs-json', file: 'dist/docs.json' },
     {

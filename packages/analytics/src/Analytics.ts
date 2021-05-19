@@ -75,7 +75,6 @@ export class AnalyticsClass {
 		Hub.listen('auth', listener);
 		Hub.listen('storage', listener);
 		Hub.listen('analytics', listener);
-		Amplify.register(this);
 	}
 
 	public getModuleName() {
@@ -100,6 +99,11 @@ export class AnalyticsClass {
 			this._disabled = true;
 		}
 
+		// turn on the autoSessionRecord if not specified
+		if (this._config['autoSessionRecord'] === undefined) {
+			this._config['autoSessionRecord'] = true;
+		}
+
 		this._pluggables.forEach(pluggable => {
 			// for backward compatibility
 			const providerConfig =
@@ -110,6 +114,7 @@ export class AnalyticsClass {
 
 			pluggable.configure({
 				disabled: this._config['disabled'],
+				autoSessionRecord: this._config['autoSessionRecord'],
 				...providerConfig,
 			});
 		});
@@ -118,18 +123,12 @@ export class AnalyticsClass {
 			this.addPluggable(new AWSPinpointProvider());
 		}
 
-		// turn on the autoSessionRecord if not specified
-		if (this._config['autoSessionRecord'] === undefined) {
-			this._config['autoSessionRecord'] = true;
-		}
-
 		dispatchAnalyticsEvent(
 			'configured',
 			null,
 			`The Analytics category has been configured successfully`
 		);
 		logger.debug('current configuration', this._config);
-
 		return this._config;
 	}
 
@@ -225,7 +224,7 @@ export class AnalyticsClass {
 	/**
 	 * Record one analytic event and send it to Pinpoint
 	 * @param {String} name - The name of the event
-	 * @param {Object} [attributs] - Attributes of the event
+	 * @param {Object} [attributes] - Attributes of the event
 	 * @param {Object} [metrics] - Event metrics
 	 * @return - A promise which resolves if buffer doesn't overflow
 	 */
@@ -234,12 +233,6 @@ export class AnalyticsClass {
 		provider?,
 		metrics?: EventMetrics
 	) {
-		if (!this.isAnalyticsConfigured()) {
-			const errMsg = 'Analytics has not been configured';
-			logger.debug(errMsg);
-			return Promise.reject(new Error(errMsg));
-		}
-
 		let params = null;
 		// this is just for compatibility, going to be deprecated
 		if (typeof event === 'string') {
@@ -264,12 +257,6 @@ export class AnalyticsClass {
 	}
 
 	private _sendEvent(params) {
-		if (!this.isAnalyticsConfigured()) {
-			const errMsg = 'Analytics has not been configured';
-			logger.debug(errMsg);
-			return Promise.reject(new Error(errMsg));
-		}
-
 		if (this._disabled) {
 			logger.debug('Analytics has been disabled');
 			return Promise.resolve();
@@ -306,10 +293,6 @@ export class AnalyticsClass {
 		} else {
 			tracker.configure(opts);
 		}
-	}
-
-	private isAnalyticsConfigured() {
-		return this._config && Object.entries(this._config).length > 0;
 	}
 }
 
@@ -419,3 +402,4 @@ const sendEvents = () => {
 };
 
 export const Analytics = new AnalyticsClass();
+Amplify.register(Analytics);
