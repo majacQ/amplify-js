@@ -45,10 +45,10 @@
   },
   "dependencies": {
     "@aws-amplify/api-rest": "1.2.24",
-    "@aws-amplify/auth": "3.4.24",
+    "@aws-amplify/auth": "3.4.33",
     "@aws-amplify/cache": "3.1.49",
     "@aws-amplify/core": "3.8.16",
-    "@aws-amplify/pubsub": "3.2.22",
+    "@aws-amplify/pubsub": "3.3.2",
     "graphql": "14.0.0",
     "uuid": "^3.2.1",
     "zen-observable-ts": "0.8.19"
