@@ -14,7 +14,11 @@
 		"react": "^16.12.0",
 		"react-app-polyfill": "^1.0.6",
 		"react-dom": "^16.12.0",
+  <<<<<<< snyk-fix-8b2a0ff9866215a55932e24844c220f3
+		"react-scripts": "3.4.3"
+  =======
 		"react-scripts": "4.0.0"
+  >>>>>>> main
 	},
 	"scripts": {
 		"test": "react-scripts test --passWithNoTests",
