@@ -26,6 +26,10 @@ jest.mock('axios', () => {
 					res({
 						data: 'blob' + withCredentialsSuffix,
 					});
+				} else if (signed_params && signed_params.data instanceof FormData) {
+					res({
+						data: signed_params.data.get('key') + withCredentialsSuffix,
+					});
 				} else {
 					res({
 						data: 'data' + withCredentialsSuffix,
@@ -37,8 +41,32 @@ jest.mock('axios', () => {
 });
 
 import { RestClient } from '../src/RestClient';
+import axios, { CancelTokenStatic } from 'axios';
+
+axios.CancelToken = <CancelTokenStatic>{
+	source: () => ({ token: null, cancel: null }),
+};
+axios.isCancel = (value: any): boolean => {
+	return false;
+};
+
+let isCancelSpy = null;
+let cancelTokenSpy = null;
+let cancelMock = null;
+let tokenMock = null;
 
 describe('RestClient test', () => {
+	beforeEach(() => {
+		cancelMock = jest.fn();
+		tokenMock = jest.fn();
+		isCancelSpy = jest.spyOn(axios, 'isCancel').mockReturnValue(true);
+		cancelTokenSpy = jest
+			.spyOn(axios.CancelToken, 'source')
+			.mockImplementation(() => {
+				return { token: tokenMock, cancel: cancelMock };
+			});
+	});
+
 	describe('ajax', () => {
 		test('fetch with signed request', async () => {
 			const apiOptions = {
@@ -125,6 +153,27 @@ describe('RestClient test', () => {
 			expect(await restClient.ajax('url', 'method', { body: 'body' })).toEqual(
 				'data'
 			);
+		});
+
+		test('ajax with formData', async () => {
+			const apiOptions = {
+				headers: {},
+				endpoints: {},
+				credentials: {
+					accessKeyId: 'accessKeyId',
+					secretAccessKey: 'secretAccessKey',
+					sessionToken: 'sessionToken',
+				},
+			};
+
+			const restClient = new RestClient(apiOptions);
+
+			const formData = new FormData();
+			formData.append('key', 'contents');
+
+			expect(
+				await restClient.ajax('url', 'method', { body: formData })
+			).toEqual('contents');
 		});
 
 		test('ajax with custom responseType', async () => {
@@ -399,6 +448,59 @@ describe('RestClient test', () => {
 			const restClient = new RestClient(apiOptions);
 
 			expect(restClient.endpoint('otherApi')).toBe('endpoint of otherApi');
+		});
+	});
+
+	describe('Cancel Token', () => {
+		const apiOptions = {
+			headers: {},
+			endpoints: [
+				{
+					name: 'myApi',
+					endpoint: 'endpoint of myApi',
+				},
+				{
+					name: 'otherApi',
+					endpoint: 'endpoint of otherApi',
+				},
+			],
+			credentials: {
+				accessKeyId: 'accessKeyId',
+				secretAccessKey: 'secretAccessKey',
+				sessionToken: 'sessionToken',
+			},
+			region: 'myregion',
+		};
+
+		test('request non existent', () => {
+			const restClient = new RestClient(apiOptions);
+			// if the request doesn't exist we can still say it is canceled successfully
+			expect(
+				restClient.cancel(
+					new Promise<any>((req, res) => {})
+				)
+			).toBeTruthy();
+		});
+
+		test('happy case', () => {
+			const restClient = new RestClient(apiOptions);
+
+			const cancellableToken = restClient.getCancellableToken();
+			const request = restClient.ajax('url', 'method', { cancellableToken });
+			restClient.updateRequestToBeCancellable(request, cancellableToken);
+
+			// cancel the request
+			const cancelSuccess = restClient.cancel(request, 'message');
+
+			expect(cancelSuccess).toBeTruthy();
+			expect(cancelTokenSpy).toBeCalledTimes(1);
+			expect(cancelMock).toBeCalledWith('message');
+		});
+
+		test('iscancel called', () => {
+			const restClient = new RestClient(apiOptions);
+			restClient.isCancel({});
+			expect(isCancelSpy).toHaveBeenCalledTimes(1);
 		});
 	});
 });

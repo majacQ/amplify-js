@@ -1,4 +1,6 @@
 import 'fake-indexeddb/auto';
+import FDBCursor from 'fake-indexeddb/build/FDBCursor';
+import { decodeTime } from 'ulid';
 import uuidValidate from 'uuid-validate';
 import Observable from 'zen-observable-ts';
 import {
@@ -8,13 +10,11 @@ import {
 import { Predicates } from '../src/predicates';
 import { ExclusiveStorage as StorageType } from '../src/storage/storage';
 import {
-	ModelInit,
-	MutableModel,
 	NonModelTypeConstructor,
 	PersistentModel,
 	PersistentModelConstructor,
-	Schema,
 } from '../src/types';
+import { Model, Metadata, testSchema } from './helpers';
 
 let initSchema: typeof initSchemaType;
 let DataStore: typeof DataStoreType;
@@ -24,8 +24,10 @@ beforeEach(() => {
 
 	jest.doMock('../src/storage/storage', () => {
 		const mock = jest.fn().mockImplementation(() => ({
+			init: jest.fn(),
 			runExclusive: jest.fn(),
-			query: jest.fn(),
+			query: jest.fn(() => []),
+			save: jest.fn(() => []),
 			observe: jest.fn(() => Observable.of()),
 		}));
 
@@ -66,6 +68,7 @@ describe('DataStore tests', () => {
 
 			const model = new Model({
 				field1: 'something',
+				dateCreated: new Date().toISOString(),
 			});
 
 			expect(model).toBeInstanceOf(Model);
@@ -76,34 +79,38 @@ describe('DataStore tests', () => {
 			expect(uuidValidate(model.id, 4)).toBe(true);
 		});
 
-		test('Non-syncable models get a uuid v1', () => {
+		test('Non-syncable models get a ulid', () => {
 			const { LocalModel } = initSchema(testSchema()) as {
 				LocalModel: PersistentModelConstructor<Model>;
 			};
 
+			const now = Date.now();
 			const model = new LocalModel({
 				field1: 'something',
+				dateCreated: new Date().toISOString(),
 			});
 
 			expect(model).toBeInstanceOf(LocalModel);
 
 			expect(model.id).toBeDefined();
 
-			/**
-			 * local models use something like a uuid v1
-			 * see https://github.com/kelektiv/node-uuid/issues/75#issuecomment-483756623
-			 */
-			expect(
-				uuidValidate(model.id.replace(/^(.{4})-(.{4})-(.{8})/, '$3-$2-$1'), 1)
-			).toBe(true);
+			const decodedTime = decodeTime(model.id);
+
+			const diff = Math.abs(decodedTime - now);
+
+			expect(diff).toBeLessThan(1000);
 		});
 
 		test('initSchema is executed only once', () => {
 			initSchema(testSchema());
 
+			const spy = jest.spyOn(console, 'warn');
+
 			expect(() => {
 				initSchema(testSchema());
-			}).toThrow('The schema has already been initialized');
+			}).not.toThrow();
+
+			expect(spy).toBeCalledWith('The schema has already been initialized');
 		});
 
 		test('Non @model class is created', () => {
@@ -126,6 +133,9 @@ describe('DataStore tests', () => {
 			const metadata = new Metadata({
 				author: 'some author',
 				tags: [],
+				rewards: [],
+				penNames: [],
+				nominations: [],
 			});
 
 			expect(metadata).toBeInstanceOf(Metadata);
@@ -142,6 +152,7 @@ describe('DataStore tests', () => {
 
 			const model = new Model({
 				field1: 'something',
+				dateCreated: new Date().toISOString(),
 			});
 
 			expect(() => {
@@ -156,6 +167,7 @@ describe('DataStore tests', () => {
 
 			const model1 = new Model({
 				field1: 'something',
+				dateCreated: new Date().toISOString(),
 			});
 
 			const model2 = Model.copyOf(model1, draft => {
@@ -178,6 +190,7 @@ describe('DataStore tests', () => {
 
 			const model1 = new Model({
 				field1: 'something',
+				dateCreated: new Date().toISOString(),
 			});
 
 			const model2 = Model.copyOf(model1, draft => {
@@ -188,6 +201,77 @@ describe('DataStore tests', () => {
 			expect(model1.id).toBe(model2.id);
 		});
 
+		test('Optional field can be initialized with undefined', () => {
+			const { Model } = initSchema(testSchema()) as {
+				Model: PersistentModelConstructor<Model>;
+			};
+
+			const model1 = new Model({
+				field1: 'something',
+				dateCreated: new Date().toISOString(),
+				optionalField1: undefined,
+			});
+
+			expect(model1.optionalField1).toBeUndefined();
+		});
+
+		test('Optional field can be initialized with null', () => {
+			const { Model } = initSchema(testSchema()) as {
+				Model: PersistentModelConstructor<Model>;
+			};
+
+			const model1 = new Model({
+				field1: 'something',
+				dateCreated: new Date().toISOString(),
+				optionalField1: null,
+			});
+
+			expect(model1.optionalField1).toBeNull();
+		});
+
+		test('Optional field can be changed to undefined inside copyOf', () => {
+			const { Model } = initSchema(testSchema()) as {
+				Model: PersistentModelConstructor<Model>;
+			};
+
+			const model1 = new Model({
+				field1: 'something',
+				dateCreated: new Date().toISOString(),
+				optionalField1: 'something-else',
+			});
+
+			const model2 = Model.copyOf(model1, draft => {
+				(<any>draft).optionalField1 = undefined;
+			});
+
+			// ID should be kept the same
+			expect(model1.id).toBe(model2.id);
+
+			expect(model1.optionalField1).toBe('something-else');
+			expect(model2.optionalField1).toBeUndefined();
+		});
+
+		test('Optional field can be set to null inside copyOf', () => {
+			const { Model } = initSchema(testSchema()) as {
+				Model: PersistentModelConstructor<Model>;
+			};
+
+			const model1 = new Model({
+				field1: 'something',
+				dateCreated: new Date().toISOString(),
+			});
+
+			const model2 = Model.copyOf(model1, draft => {
+				(<any>draft).optionalField1 = null;
+			});
+
+			// ID should be kept the same
+			expect(model1.id).toBe(model2.id);
+
+			expect(model1.optionalField1).toBeUndefined();
+			expect(model2.optionalField1).toBeNull();
+		});
+
 		test('Non @model - Field cannot be changed', () => {
 			const { Metadata } = initSchema(testSchema()) as {
 				Metadata: NonModelTypeConstructor<Metadata>;
@@ -195,6 +279,9 @@ describe('DataStore tests', () => {
 
 			const nonModel = new Metadata({
 				author: 'something',
+				rewards: [],
+				penNames: [],
+				nominations: [],
 			});
 
 			expect(() => {
@@ -239,13 +326,17 @@ describe('DataStore tests', () => {
 	});
 
 	describe('Basic operations', () => {
-		test('Save returns the saved model', async () => {
-			let model: Model;
+		let Model: PersistentModelConstructor<Model>;
+		let Metadata: NonModelTypeConstructor<Metadata>;
 
+		beforeEach(() => {
 			jest.resetModules();
 			jest.doMock('../src/storage/storage', () => {
 				const mock = jest.fn().mockImplementation(() => ({
-					runExclusive: jest.fn(() => [model]),
+					init: jest.fn(),
+					runExclusive: jest.fn(() => []),
+					query: jest.fn(() => []),
+					observe: jest.fn(() => Observable.from([])),
 				}));
 
 				(<any>mock).getNamespace = () => ({ models: {} });
@@ -256,15 +347,539 @@ describe('DataStore tests', () => {
 
 			const classes = initSchema(testSchema());
 
+			({ Model, Metadata } = classes as {
+				Model: PersistentModelConstructor<Model>;
+				Metadata: NonModelTypeConstructor<Metadata>;
+			});
+		});
+
+		test('Save returns the saved model', async () => {
+			let model: Model;
+			const save = jest.fn(() => [model]);
+			const query = jest.fn(() => [model]);
+
+			jest.resetModules();
+			jest.doMock('../src/storage/storage', () => {
+				const mock = jest.fn().mockImplementation(() => {
+					const _mock = {
+						init: jest.fn(),
+						save,
+						query,
+						runExclusive: jest.fn(fn => fn.bind(this, _mock)()),
+					};
+
+					return _mock;
+				});
+
+				(<any>mock).getNamespace = () => ({ models: {} });
+
+				return { ExclusiveStorage: mock };
+			});
+
+			({ initSchema, DataStore } = require('../src/datastore/datastore'));
+
+			const classes = initSchema(testSchema());
+
 			const { Model } = classes as { Model: PersistentModelConstructor<Model> };
 
 			model = new Model({
 				field1: 'Some value',
+				dateCreated: new Date().toISOString(),
 			});
 
 			const result = await DataStore.save(model);
 
+			const [settingsSave, modelCall] = <any>save.mock.calls;
+			const [_model, _condition, _mutator, patches] = modelCall;
+
 			expect(result).toMatchObject(model);
+			expect(patches).toBeUndefined();
+		});
+
+		test('Save returns the updated model and patches', async () => {
+			let model: Model;
+			const save = jest.fn(() => [model]);
+			const query = jest.fn(() => [model]);
+
+			jest.resetModules();
+			jest.doMock('../src/storage/storage', () => {
+				const mock = jest.fn().mockImplementation(() => {
+					const _mock = {
+						init: jest.fn(),
+						save,
+						query,
+						runExclusive: jest.fn(fn => fn.bind(this, _mock)()),
+					};
+
+					return _mock;
+				});
+
+				(<any>mock).getNamespace = () => ({ models: {} });
+
+				return { ExclusiveStorage: mock };
+			});
+
+			({ initSchema, DataStore } = require('../src/datastore/datastore'));
+
+			const classes = initSchema(testSchema());
+
+			const { Model } = classes as { Model: PersistentModelConstructor<Model> };
+
+			model = new Model({
+				field1: 'something',
+				dateCreated: new Date().toISOString(),
+			});
+
+			await DataStore.save(model);
+
+			model = Model.copyOf(model, draft => {
+				draft.field1 = 'edited';
+			});
+
+			const result = await DataStore.save(model);
+
+			const [settingsSave, modelSave, modelUpdate] = <any>save.mock.calls;
+			const [_model, _condition, _mutator, patches] = modelUpdate;
+
+			const expectedPatches = [
+				{ op: 'replace', path: ['field1'], value: 'edited' },
+			];
+
+			expect(result).toMatchObject(model);
+			expect(patches).toMatchObject(expectedPatches);
+		});
+
+		test('Save returns the updated model and patches - list field', async () => {
+			let model: Model;
+			const save = jest.fn(() => [model]);
+			const query = jest.fn(() => [model]);
+
+			jest.resetModules();
+			jest.doMock('../src/storage/storage', () => {
+				const mock = jest.fn().mockImplementation(() => {
+					const _mock = {
+						init: jest.fn(),
+						save,
+						query,
+						runExclusive: jest.fn(fn => fn.bind(this, _mock)()),
+					};
+
+					return _mock;
+				});
+
+				(<any>mock).getNamespace = () => ({ models: {} });
+
+				return { ExclusiveStorage: mock };
+			});
+
+			({ initSchema, DataStore } = require('../src/datastore/datastore'));
+
+			const classes = initSchema(testSchema());
+
+			const { Model } = classes as { Model: PersistentModelConstructor<Model> };
+
+			model = new Model({
+				field1: 'something',
+				dateCreated: new Date().toISOString(),
+				emails: ['john@doe.com', 'jane@doe.com'],
+			});
+
+			await DataStore.save(model);
+
+			model = Model.copyOf(model, draft => {
+				draft.emails = [...draft.emails, 'joe@doe.com'];
+			});
+
+			let result = await DataStore.save(model);
+
+			expect(result).toMatchObject(model);
+
+			model = Model.copyOf(model, draft => {
+				draft.emails.push('joe@doe.com');
+			});
+
+			result = await DataStore.save(model);
+
+			expect(result).toMatchObject(model);
+
+			const [settingsSave, modelSave, modelUpdate, modelUpdate2] = <any>(
+				save.mock.calls
+			);
+
+			const [_model, _condition, _mutator, patches] = modelUpdate;
+			const [_model2, _condition2, _mutator2, patches2] = modelUpdate2;
+
+			const expectedPatches = [
+				{
+					op: 'replace',
+					path: ['emails'],
+					value: ['john@doe.com', 'jane@doe.com', 'joe@doe.com'],
+				},
+			];
+
+			const expectedPatches2 = [
+				{
+					op: 'add',
+					path: ['emails', 3],
+					value: 'joe@doe.com',
+				},
+			];
+
+			expect(patches).toMatchObject(expectedPatches);
+			expect(patches2).toMatchObject(expectedPatches2);
+		});
+
+		test('Instantiation validations', async () => {
+			expect(() => {
+				new Model({
+					field1: undefined,
+					dateCreated: new Date().toISOString(),
+				});
+			}).toThrowError('Field field1 is required');
+
+			expect(() => {
+				new Model({
+					field1: null,
+					dateCreated: new Date().toISOString(),
+				});
+			}).toThrowError('Field field1 is required');
+
+			expect(() => {
+				new Model({
+					field1: <any>1234,
+					dateCreated: new Date().toISOString(),
+				});
+			}).toThrowError(
+				'Field field1 should be of type string, number received. 1234'
+			);
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: 'not-a-date',
+				});
+			}).toThrowError(
+				'Field dateCreated should be of type AWSDateTime, validation failed. not-a-date'
+			);
+
+			expect(
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					metadata: new Metadata({
+						author: 'Some author',
+						tags: undefined,
+						rewards: [],
+						penNames: [],
+						nominations: [],
+					}),
+				}).metadata.tags
+			).toBeUndefined();
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					metadata: new Metadata({
+						author: 'Some author',
+						tags: undefined,
+						rewards: [null],
+						penNames: [],
+						nominations: [],
+					}),
+				});
+			}).toThrowError(
+				'All elements in the rewards array should be of type string, [null] received. '
+			);
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					emails: null,
+					ips: null,
+				});
+			}).not.toThrow();
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					emails: [null],
+				});
+			}).toThrowError(
+				'All elements in the emails array should be of type string, [null] received. '
+			);
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					ips: [null],
+				});
+			}).not.toThrow();
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					ips: ['1.1.1.1'],
+				});
+			}).not.toThrow();
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					ips: ['not.an.ip'],
+				});
+			}).toThrowError(
+				`All elements in the ips array should be of type AWSIPAddress, validation failed for one or more elements. not.an.ip`
+			);
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					ips: ['1.1.1.1', 'not.an.ip'],
+				});
+			}).toThrowError(
+				`All elements in the ips array should be of type AWSIPAddress, validation failed for one or more elements. 1.1.1.1,not.an.ip`
+			);
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					emails: ['test@example.com'],
+				});
+			}).not.toThrow();
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					emails: [],
+					ips: [],
+				});
+			}).not.toThrow();
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					emails: ['not-an-email'],
+				});
+			}).toThrowError(
+				'All elements in the emails array should be of type AWSEmail, validation failed for one or more elements. not-an-email'
+			);
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					ips: ['not-an-ip'],
+				});
+			}).toThrowError(
+				'All elements in the ips array should be of type AWSIPAddress, validation failed for one or more elements. not-an-ip'
+			);
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					metadata: new Metadata({
+						author: 'Some author',
+						tags: undefined,
+						rewards: [],
+						penNames: [],
+						nominations: null,
+					}),
+				});
+			}).toThrowError('Field nominations is required');
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					metadata: new Metadata({
+						author: 'Some author',
+						tags: undefined,
+						rewards: [],
+						penNames: [undefined],
+						nominations: [],
+					}),
+				});
+			}).toThrowError(
+				'All elements in the penNames array should be of type string, [undefined] received. '
+			);
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					metadata: new Metadata({
+						author: 'Some author',
+						tags: [<any>1234],
+						rewards: [],
+						penNames: [],
+						nominations: [],
+					}),
+				});
+			}).toThrowError(
+				'All elements in the tags array should be of type string | null | undefined, [number] received. 1234'
+			);
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					metadata: new Metadata({
+						author: 'Some author',
+						rewards: [],
+						penNames: [],
+						nominations: [],
+						misc: [null],
+					}),
+				});
+			}).not.toThrow();
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					metadata: new Metadata({
+						author: 'Some author',
+						rewards: [],
+						penNames: [],
+						nominations: [],
+						misc: [undefined],
+					}),
+				});
+			}).not.toThrow();
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					metadata: new Metadata({
+						author: 'Some author',
+						rewards: [],
+						penNames: [],
+						nominations: [],
+						misc: [undefined, null],
+					}),
+				});
+			}).not.toThrow();
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					metadata: new Metadata({
+						author: 'Some author',
+						rewards: [],
+						penNames: [],
+						nominations: [],
+						misc: [null, 'ok'],
+					}),
+				});
+			}).not.toThrow();
+
+			expect(() => {
+				new Model({
+					field1: 'someField',
+					dateCreated: new Date().toISOString(),
+					metadata: new Metadata({
+						author: 'Some author',
+						rewards: [],
+						penNames: [],
+						nominations: [],
+						misc: [null, <any>123],
+					}),
+				});
+			}).toThrowError(
+				'All elements in the misc array should be of type string | null | undefined, [null,number] received. ,123'
+			);
+
+			expect(
+				new Model(<any>{ extraAttribute: 'some value', field1: 'some value' })
+			).toHaveProperty('extraAttribute');
+
+			expect(() => {
+				Model.copyOf(<any>undefined, d => d);
+			}).toThrow('The source object is not a valid model');
+			expect(() => {
+				const source = new Model({
+					field1: 'something',
+					dateCreated: new Date().toISOString(),
+				});
+				Model.copyOf(source, d => (d.field1 = <any>1234));
+			}).toThrow(
+				'Field field1 should be of type string, number received. 1234'
+			);
+		});
+
+		test('Delete params', async () => {
+			await expect(DataStore.delete(<any>undefined)).rejects.toThrow(
+				'Model or Model Constructor required'
+			);
+
+			await expect(DataStore.delete(<any>Model)).rejects.toThrow(
+				'Id to delete or criteria required. Do you want to delete all? Pass Predicates.ALL'
+			);
+
+			await expect(DataStore.delete(Model, <any>(() => {}))).rejects.toThrow(
+				'Criteria required. Do you want to delete all? Pass Predicates.ALL'
+			);
+
+			await expect(DataStore.delete(Model, <any>(() => {}))).rejects.toThrow(
+				'Criteria required. Do you want to delete all? Pass Predicates.ALL'
+			);
+
+			await expect(DataStore.delete(<any>{})).rejects.toThrow(
+				'Object is not an instance of a valid model'
+			);
+
+			await expect(
+				DataStore.delete(
+					new Model({
+						field1: 'somevalue',
+						dateCreated: new Date().toISOString(),
+					}),
+					<any>{}
+				)
+			).rejects.toThrow('Invalid criteria');
+		});
+
+		test('Query params', async () => {
+			await expect(DataStore.query(<any>undefined)).rejects.toThrow(
+				'Constructor is not for a valid model'
+			);
+
+			await expect(DataStore.query(<any>undefined)).rejects.toThrow(
+				'Constructor is not for a valid model'
+			);
+
+			await expect(
+				DataStore.query(Model, <any>'someid', { page: 0 })
+			).rejects.toThrow('Limit is required when requesting a page');
+
+			await expect(
+				DataStore.query(Model, <any>'someid', { page: <any>'a', limit: 10 })
+			).rejects.toThrow('Page should be a number');
+
+			await expect(
+				DataStore.query(Model, <any>'someid', { page: -1, limit: 10 })
+			).rejects.toThrow("Page can't be negative");
+
+			await expect(
+				DataStore.query(Model, <any>'someid', { page: 0, limit: <any>'avalue' })
+			).rejects.toThrow('Limit should be a number');
+
+			await expect(
+				DataStore.query(Model, <any>'someid', { page: 0, limit: -1 })
+			).rejects.toThrow("Limit can't be negative");
 		});
 	});
 
@@ -276,6 +891,9 @@ describe('DataStore tests', () => {
 		const metadata = new Metadata({
 			author: 'some author',
 			tags: [],
+			rewards: [],
+			penNames: [],
+			nominations: [],
 		});
 
 		await expect(DataStore.save(<any>metadata)).rejects.toThrow(
@@ -292,6 +910,7 @@ describe('DataStore tests', () => {
 			jest.resetModules();
 			jest.doMock('../src/storage/storage', () => {
 				const mock = jest.fn().mockImplementation(() => ({
+					init: jest.fn(),
 					runExclusive: jest.fn(() => [model]),
 					query: jest.fn(() => [model]),
 					observe: jest.fn(() => Observable.from([])),
@@ -309,6 +928,7 @@ describe('DataStore tests', () => {
 
 			model = new Model({
 				field1: 'Some value',
+				dateCreated: new Date().toISOString(),
 			});
 		});
 
@@ -392,7 +1012,10 @@ describe('DataStore tests', () => {
 				});
 			});
 			test('subscribe to model instance', async () => {
-				const model = new Model({ field1: 'somevalue' });
+				const model = new Model({
+					field1: 'somevalue',
+					dateCreated: new Date().toISOString(),
+				});
 
 				DataStore.observe(model).subscribe(({ element, model }) => {
 					expectType<PersistentModelConstructor<Model>>(model);
@@ -423,7 +1046,10 @@ describe('DataStore tests', () => {
 
 		describe('Observe with generic type', () => {
 			test('subscribe to model instance', async () => {
-				const model = new Model({ field1: 'somevalue' });
+				const model = new Model({
+					field1: 'somevalue',
+					dateCreated: new Date().toISOString(),
+				});
 
 				DataStore.observe<Model>(model).subscribe(({ element, model }) => {
 					expectType<PersistentModelConstructor<Model>>(model);
@@ -455,103 +1081,3 @@ describe('DataStore tests', () => {
 		});
 	});
 });
-
-//#region Test helpers
-
-declare class Model {
-	public readonly id: string;
-	public readonly field1: string;
-	public readonly metadata?: Metadata;
-
-	constructor(init: ModelInit<Model>);
-
-	static copyOf(
-		src: Model,
-		mutator: (draft: MutableModel<Model>) => void | Model
-	): Model;
-}
-
-export declare class Metadata {
-	readonly author: string;
-	readonly tags?: string[];
-	constructor(init: Metadata);
-}
-
-function testSchema(): Schema {
-	return {
-		enums: {},
-		models: {
-			Model: {
-				name: 'Model',
-				pluralName: 'Models',
-				syncable: true,
-				fields: {
-					id: {
-						name: 'id',
-						isArray: false,
-						type: 'ID',
-						isRequired: true,
-					},
-					field1: {
-						name: 'field1',
-						isArray: false,
-						type: 'String',
-						isRequired: true,
-					},
-					metadata: {
-						name: 'metadata',
-						isArray: false,
-						type: {
-							nonModel: 'Metadata',
-						},
-						isRequired: false,
-						attributes: [],
-					},
-				},
-			},
-			LocalModel: {
-				name: 'LocalModel',
-				pluralName: 'LocalModels',
-				syncable: false,
-				fields: {
-					id: {
-						name: 'id',
-						isArray: false,
-						type: 'ID',
-						isRequired: true,
-					},
-					field1: {
-						name: 'field1',
-						isArray: false,
-						type: 'String',
-						isRequired: true,
-					},
-				},
-			},
-		},
-		nonModels: {
-			Metadata: {
-				name: 'Metadata',
-				fields: {
-					author: {
-						name: 'author',
-						isArray: false,
-						type: 'String',
-						isRequired: true,
-						attributes: [],
-					},
-					tags: {
-						name: 'tags',
-						isArray: true,
-						type: 'String',
-						isRequired: false,
-						attributes: [],
-					},
-				},
-			},
-		},
-		version: '1',
-	};
-}
-
-//#endregion

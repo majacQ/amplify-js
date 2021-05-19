@@ -1,5 +1,6 @@
 import OAuth from '../src/OAuth/OAuth';
 import * as oauthStorage from '../src/OAuth/oauthStorage';
+import { NodeCallback } from 'amazon-cognito-identity-js';
 
 jest.mock('crypto-js/sha256', () => {
 	return {
@@ -139,7 +140,13 @@ jest.mock('amazon-cognito-identity-js/lib/CognitoUser', () => {
 	};
 
 	CognitoUser.prototype.resendConfirmationCode = callback => {
-		callback(null, 'result');
+		callback(null, {
+			CodeDeliveryDetails: {
+				AttributeName: 'email',
+				DeliveryMedium: 'EMAIL',
+				Destination: 'amplify@*****.com',
+			},
+		});
 	};
 
 	CognitoUser.prototype.changePassword = (
@@ -228,6 +235,7 @@ import {
 	GoogleOAuth,
 	StorageHelper,
 	ICredentials,
+	Hub,
 } from '@aws-amplify/core';
 import { AuthError, NoUserPoolError } from '../src/Errors';
 import { AuthErrorTypes } from '../src/types/Auth';
@@ -610,7 +618,13 @@ describe('auth unit test', () => {
 			const auth = new Auth(authOptions);
 
 			expect.assertions(1);
-			expect(await auth.resendSignUp('username')).toBe('result');
+			expect(await auth.resendSignUp('username')).toMatchObject({
+				CodeDeliveryDetails: {
+					AttributeName: 'email',
+					DeliveryMedium: 'EMAIL',
+					Destination: 'amplify@*****.com',
+				},
+			});
 
 			spyon.mockClear();
 		});
@@ -680,6 +694,57 @@ describe('auth unit test', () => {
 			expect.assertions(2);
 			expect(auth.resendSignUp(null).then()).rejects.toThrow(AuthError);
 			expect(auth.resendSignUp(null).then()).rejects.toEqual(errorMessage);
+		});
+	});
+
+	describe('events', () => {
+		test('token events', async () => {
+			expect.assertions(2);
+
+			// calling the `wrappedCallback` (a node callback) manually lets us trigger hub events
+			const auth = new Auth(authOptions);
+			const callback: NodeCallback.Any = (error, result) => {};
+			const wrappedCallback = auth.wrapRefreshSessionCallback(callback);
+
+			// saving a reference to this fn's return before triggering `wrappedCallback` lets us capture the payload
+			const captureEvent = () => {
+				return new Promise(resolve => {
+					Hub.listen('auth', capsule => {
+						switch (capsule.payload.event) {
+							case 'tokenRefresh': {
+								return resolve(true);
+							}
+
+							case 'tokenRefresh_failure': {
+								return resolve(capsule.payload.data);
+							}
+
+							default: {
+								break;
+							}
+						}
+					});
+				});
+			};
+
+			// for successful token refresh
+			const successEventPending = captureEvent();
+			wrappedCallback(undefined, true);
+
+			// for failed token refresh
+			const syntheticError = new Error();
+			const failureEventPending = captureEvent();
+			wrappedCallback(syntheticError, undefined);
+
+			// gather the payloads
+			const [successEvent, failureEvent] = await Promise.all([
+				successEventPending,
+				failureEventPending,
+			]);
+
+			// make assertions
+			expect(successEvent).toBeTruthy();
+			expect(failureEvent).toBe(syntheticError);
 		});
 	});
 
@@ -1160,6 +1225,7 @@ describe('auth unit test', () => {
 					onFailure: jasmine.any(Function),
 					mfaRequired: jasmine.any(Function),
 					mfaSetup: jasmine.any(Function),
+					totpRequired: jasmine.any(Function),
 				},
 				{ foo: 'bar' }
 			);
@@ -1189,6 +1255,7 @@ describe('auth unit test', () => {
 					onFailure: jasmine.any(Function),
 					mfaRequired: jasmine.any(Function),
 					mfaSetup: jasmine.any(Function),
+					totpRequired: jasmine.any(Function),
 				},
 				{ custom: 'value' }
 			);
@@ -1458,7 +1525,10 @@ describe('auth unit test', () => {
 						setItem() {},
 						getItem() {
 							return JSON.stringify({
-								user: 'federated_user',
+								user: {
+									name: 'federated user',
+								},
+								token: '12345',
 							});
 						},
 						removeItem() {},
@@ -1472,7 +1542,10 @@ describe('auth unit test', () => {
 			});
 
 			expect.assertions(1);
-			expect(await auth.currentAuthenticatedUser()).toBe('federated_user');
+			expect(await auth.currentAuthenticatedUser()).toStrictEqual({
+				name: 'federated user',
+				token: '12345',
+			});
 
 			spyon.mockClear();
 		});
@@ -2128,7 +2201,7 @@ describe('auth unit test', () => {
 			spyon.mockClear();
 		});
 
-		test('inputVerficationCode', async () => {
+		test('inputVerificationCode', async () => {
 			const spyon = jest
 				.spyOn(CognitoUser.prototype, 'forgotPassword')
 				.mockImplementationOnce(callback => {
@@ -2356,7 +2429,7 @@ describe('auth unit test', () => {
 				});
 
 			const spyon3 = jest
-				.spyOn(Auth.prototype, 'currentCredentials')
+				.spyOn(auth, 'currentCredentials')
 				.mockImplementationOnce(() => {
 					return Promise.resolve({
 						identityId: 'identityId',
@@ -2775,9 +2848,26 @@ describe('auth unit test', () => {
 				getUsername: jest.fn(),
 				setSignInUserSession: jest.fn(),
 			}));
+			// Mock to help assert invocation order of other spies
+			const trackSpies = jest.fn();
 			const replaceStateSpy = jest
 				.spyOn(window.history, 'replaceState')
-				.mockReturnThis();
+				.mockImplementation((stateObj, title, url) => {
+					trackSpies(
+						`window.history.replaceState(${JSON.stringify(
+							stateObj
+						)}, ${JSON.stringify(title)}, '${url}')`
+					);
+					return this;
+				});
+			const hubSpy = jest
+				.spyOn(Hub, 'dispatch')
+				.mockImplementation((channel, { event }) =>
+					// payload.data isn't necessary for tracking order of dispatch events
+					trackSpies(
+						`Hub.dispatch('${channel}', { data: ..., event: '${event}' })`
+					)
+				);
 
 			const code = 'XXXX-YYY-ZZZ';
 			const state = 'STATEABC';
@@ -2794,6 +2884,25 @@ describe('auth unit test', () => {
 				null,
 				(options.oauth as AwsCognitoOAuthOpts).redirectSignIn
 			);
+
+			// replaceState should be called *prior* to `signIn` dispatch,
+			// so that customers can override with a new value
+			expect(trackSpies.mock.calls).toMatchInlineSnapshot(`
+			Array [
+			  Array [
+			    "Hub.dispatch('auth', { data: ..., event: 'parsingCallbackUrl' })",
+			  ],
+			  Array [
+			    "window.history.replaceState({}, null, 'http://localhost:3000/')",
+			  ],
+			  Array [
+			    "Hub.dispatch('auth', { data: ..., event: 'signIn' })",
+			  ],
+			  Array [
+			    "Hub.dispatch('auth', { data: ..., event: 'cognitoHostedUI' })",
+			  ],
+			]
+		`);
 		});
 
 		test('User Pools Implicit Flow', async () => {

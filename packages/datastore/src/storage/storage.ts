@@ -1,18 +1,18 @@
-import { Mutex } from '@aws-amplify/core';
+import { Logger, Mutex } from '@aws-amplify/core';
 import Observable, { ZenObservable } from 'zen-observable-ts';
 import PushStream from 'zen-push';
+import { Patch } from 'immer';
 import { ModelInstanceCreator } from '../datastore/datastore';
 import { ModelPredicateCreator } from '../predicates';
 import {
 	InternalSchema,
+	ModelInstanceMetadata,
 	ModelPredicate,
 	NamespaceResolver,
 	OpType,
 	PaginationInput,
 	PersistentModel,
 	PersistentModelConstructor,
-	PredicateGroups,
-	PredicateObject,
 	PredicatesGroup,
 	QueryOne,
 	SchemaNamespace,
@@ -22,17 +22,24 @@ import { isModelConstructor, STORAGE, validatePredicate } from '../util';
 import { Adapter } from './adapter';
 import getDefaultAdapter from './adapter/getDefaultAdapter';
 
-export type StorageSubscriptionMessage = SubscriptionMessage<any> & {
+export type StorageSubscriptionMessage<
+	T extends PersistentModel
+> = SubscriptionMessage<T> & {
 	mutator?: Symbol;
 };
 
 export type StorageFacade = Omit<Adapter, 'setUp'>;
+export type Storage = InstanceType<typeof StorageClass>;
 
-class Storage implements StorageFacade {
+const logger = new Logger('DataStore');
+
+class StorageClass implements StorageFacade {
 	private initialized: Promise<void>;
 	private readonly pushStream: {
-		observable: Observable<StorageSubscriptionMessage>;
-	} & Required<ZenObservable.Observer<StorageSubscriptionMessage>>;
+		observable: Observable<StorageSubscriptionMessage<PersistentModel>>;
+	} & Required<
+		ZenObservable.Observer<StorageSubscriptionMessage<PersistentModel>>
+	>;
 
 	constructor(
 		private readonly schema: InternalSchema,
@@ -42,7 +49,8 @@ class Storage implements StorageFacade {
 			modelName: string
 		) => PersistentModelConstructor<any>,
 		private readonly modelInstanceCreator: ModelInstanceCreator,
-		private readonly adapter?: Adapter
+		private readonly adapter?: Adapter,
+		private readonly sessionId?: string
 	) {
 		this.adapter = getDefaultAdapter();
 		this.pushStream = new PushStream();
@@ -60,10 +68,13 @@ class Storage implements StorageFacade {
 		return namespace;
 	}
 
-	private async init() {
+	async init() {
 		if (this.initialized !== undefined) {
+			await this.initialized;
 			return;
 		}
+		logger.debug('Starting Storage');
+
 		let resolve: (value?: void | PromiseLike<void>) => void;
 		let reject: (value?: void | PromiseLike<void>) => void;
 
@@ -77,7 +88,8 @@ class Storage implements StorageFacade {
 				this.schema,
 				this.namespaceResolver,
 				this.modelInstanceCreator,
-				this.getModelConstructorByModelName
+				this.getModelConstructorByModelName,
+				this.sessionId
 			)
 			.then(resolve, reject);
 
@@ -87,17 +99,45 @@ class Storage implements StorageFacade {
 	async save<T extends PersistentModel>(
 		model: T,
 		condition?: ModelPredicate<T>,
-		mutator?: Symbol
+		mutator?: Symbol,
+		patches?: Patch[]
 	): Promise<[T, OpType.INSERT | OpType.UPDATE][]> {
 		await this.init();
 
 		const result = await this.adapter.save(model, condition);
 
 		result.forEach(r => {
-			const [element, opType] = r;
+			const [originalElement, opType] = r;
 
-			const modelConstructor = (Object.getPrototypeOf(element) as Object)
-				.constructor as PersistentModelConstructor<T>;
+			let updatedElement;
+			if (opType === OpType.UPDATE && patches && patches.length) {
+				updatedElement = {};
+				// extract array of updated fields from patches
+				const updatedFields = patches.map(patch => patch.path && patch.path[0]);
+
+				// set original values for these fields
+				updatedFields.forEach(field => {
+					updatedElement[field] = originalElement[field];
+				});
+
+				const { id, _version, _lastChangedAt, _deleted } = originalElement;
+
+				// For update mutations we only want to send fields with changes
+				// and the required internal fields
+				updatedElement = {
+					...updatedElement,
+					id,
+					_version,
+					_lastChangedAt,
+					_deleted,
+				};
+			}
+
+			const element = updatedElement || originalElement;
+
+			const modelConstructor = (Object.getPrototypeOf(
+				originalElement
+			) as Object).constructor as PersistentModelConstructor<T>;
 
 			this.pushStream.next({
 				model: modelConstructor,
@@ -172,7 +212,7 @@ class Storage implements StorageFacade {
 	async query<T extends PersistentModel>(
 		modelConstructor: PersistentModelConstructor<T>,
 		predicate?: ModelPredicate<T>,
-		pagination?: PaginationInput
+		pagination?: PaginationInput<T>
 	): Promise<T[]> {
 		await this.init();
 
@@ -195,22 +235,19 @@ class Storage implements StorageFacade {
 		skipOwn?: Symbol
 	): Observable<SubscriptionMessage<T>> {
 		const listenToAll = !modelConstructor;
-		const hasPredicate = !!predicate;
+		const { predicates, type } =
+			ModelPredicateCreator.getPredicates(predicate, false) || {};
+		const hasPredicate = !!predicates;
 
 		let result = this.pushStream.observable
 			.filter(({ mutator }) => {
 				return !skipOwn || mutator !== skipOwn;
 			})
-			.map(({ mutator: _mutator, ...message }) => message);
+			.map(
+				({ mutator: _mutator, ...message }) => message as SubscriptionMessage<T>
+			);
 
 		if (!listenToAll) {
-			let predicates: (PredicateObject<T> | PredicatesGroup<T>)[],
-				type: keyof PredicateGroups<T>;
-
-			if (hasPredicate) {
-				({ predicates, type } = ModelPredicateCreator.getPredicates(predicate));
-			}
-
 			result = result.filter(({ model, element }) => {
 				if (modelConstructor !== model) {
 					return false;
@@ -236,10 +273,32 @@ class Storage implements StorageFacade {
 			this.pushStream.complete();
 		}
 	}
+
+	async batchSave<T extends PersistentModel>(
+		modelConstructor: PersistentModelConstructor<any>,
+		items: ModelInstanceMetadata[],
+		mutator?: Symbol
+	): Promise<[T, OpType][]> {
+		await this.init();
+
+		const result = await this.adapter.batchSave(modelConstructor, items);
+
+		result.forEach(([element, opType]) => {
+			this.pushStream.next({
+				model: modelConstructor,
+				opType,
+				element,
+				mutator,
+				condition: undefined,
+			});
+		});
+
+		return result as any;
+	}
 }
 
 class ExclusiveStorage implements StorageFacade {
-	private storage: Storage;
+	private storage: StorageClass;
 	private readonly mutex = new Mutex();
 	constructor(
 		schema: InternalSchema,
@@ -249,28 +308,31 @@ class ExclusiveStorage implements StorageFacade {
 			modelName: string
 		) => PersistentModelConstructor<any>,
 		modelInstanceCreator: ModelInstanceCreator,
-		adapter?: Adapter
+		adapter?: Adapter,
+		sessionId?: string
 	) {
-		this.storage = new Storage(
+		this.storage = new StorageClass(
 			schema,
 			namespaceResolver,
 			getModelConstructorByModelName,
 			modelInstanceCreator,
-			adapter
+			adapter,
+			sessionId
 		);
 	}
 
-	runExclusive<T>(fn: (storage: Storage) => Promise<T>) {
+	runExclusive<T>(fn: (storage: StorageClass) => Promise<T>) {
 		return <Promise<T>>this.mutex.runExclusive(fn.bind(this, this.storage));
 	}
 
 	async save<T extends PersistentModel>(
 		model: T,
 		condition?: ModelPredicate<T>,
-		mutator?: Symbol
+		mutator?: Symbol,
+		patches?: Patch[]
 	): Promise<[T, OpType.INSERT | OpType.UPDATE][]> {
 		return this.runExclusive<[T, OpType.INSERT | OpType.UPDATE][]>(storage =>
-			storage.save<T>(model, condition, mutator)
+			storage.save<T>(model, condition, mutator, patches)
 		);
 	}
 
@@ -305,7 +367,7 @@ class ExclusiveStorage implements StorageFacade {
 	async query<T extends PersistentModel>(
 		modelConstructor: PersistentModelConstructor<T>,
 		predicate?: ModelPredicate<T>,
-		pagination?: PaginationInput
+		pagination?: PaginationInput<T>
 	): Promise<T[]> {
 		return this.runExclusive<T[]>(storage =>
 			storage.query<T>(modelConstructor, predicate, pagination)
@@ -322,7 +384,7 @@ class ExclusiveStorage implements StorageFacade {
 	}
 
 	static getNamespace() {
-		return Storage.getNamespace();
+		return StorageClass.getNamespace();
 	}
 
 	observe<T extends PersistentModel>(
@@ -335,6 +397,17 @@ class ExclusiveStorage implements StorageFacade {
 
 	async clear() {
 		await this.storage.clear();
+	}
+
+	batchSave<T extends PersistentModel>(
+		modelConstructor: PersistentModelConstructor<any>,
+		items: ModelInstanceMetadata[]
+	): Promise<[T, OpType][]> {
+		return this.storage.batchSave(modelConstructor, items);
+	}
+
+	async init() {
+		return this.storage.init();
 	}
 }
 

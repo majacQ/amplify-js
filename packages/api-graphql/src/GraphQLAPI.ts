@@ -16,10 +16,11 @@ import { OperationDefinitionNode } from 'graphql/language';
 import { print } from 'graphql/language/printer';
 import { parse } from 'graphql/language/parser';
 import Observable from 'zen-observable-ts';
-import Amplify, {
+import {
+	Amplify,
 	ConsoleLogger as Logger,
-	Credentials,
 	Constants,
+	Credentials,
 	INTERNAL_AWS_APPSYNC_REALTIME_PUBSUB_PROVIDER,
 } from '@aws-amplify/core';
 import PubSub from '@aws-amplify/pubsub';
@@ -46,13 +47,16 @@ export class GraphQLAPIClass {
 	private _options;
 	private _api = null;
 
+	Auth = Auth;
+	Cache = Cache;
+	Credentials = Credentials;
+
 	/**
 	 * Initialize GraphQL API with AWS configuration
 	 * @param {Object} options - Configuration object for API
 	 */
 	constructor(options) {
 		this._options = options;
-		Amplify.register(this);
 		logger.debug('API Options', this._options);
 	}
 
@@ -100,6 +104,9 @@ export class GraphQLAPIClass {
 		logger.debug('create Rest instance');
 		if (this._options) {
 			this._api = new RestClient(this._options);
+			// Share instance Credentials with client for SSR
+			this._api.Credentials = this.Credentials;
+
 			return true;
 		} else {
 			return Promise.reject('API not configured');
@@ -132,17 +139,26 @@ export class GraphQLAPIClass {
 				}
 				break;
 			case 'OPENID_CONNECT':
+				let token;
+				// backwards compatibility
 				const federatedInfo = await Cache.getItem('federatedInfo');
-
-				if (!federatedInfo || !federatedInfo.token) {
+				if (federatedInfo) {
+					token = federatedInfo.token;
+				} else {
+					const currentUser = await Auth.currentAuthenticatedUser();
+					if (currentUser) {
+						token = currentUser.token;
+					}
+				}
+				if (!token) {
 					throw new Error('No federated jwt');
 				}
 				headers = {
-					Authorization: federatedInfo.token,
+					Authorization: token,
 				};
 				break;
 			case 'AMAZON_COGNITO_USER_POOLS':
-				const session = await Auth.currentSession();
+				const session = await this.Auth.currentSession();
 				headers = {
 					Authorization: session.getAccessToken().getJwtToken(),
 				};
@@ -196,7 +212,18 @@ export class GraphQLAPIClass {
 		switch (operationType) {
 			case 'query':
 			case 'mutation':
-				return this._graphql({ query, variables, authMode }, additionalHeaders);
+				const cancellableToken = this._api.getCancellableToken();
+				const initParams = { cancellableToken };
+				const responsePromise = this._graphql(
+					{ query, variables, authMode },
+					additionalHeaders,
+					initParams
+				);
+				this._api.updateRequestToBeCancellable(
+					responsePromise,
+					cancellableToken
+				);
+				return responsePromise;
 			case 'subscription':
 				return this._graphqlSubscribe(
 					{ query, variables, authMode },
@@ -209,7 +236,8 @@ export class GraphQLAPIClass {
 
 	private async _graphql(
 		{ query, variables, authMode }: GraphQLOptions,
-		additionalHeaders = {}
+		additionalHeaders = {},
+		initParams = {}
 	): Promise<GraphQLResult> {
 		if (!this._api) {
 			await this.createInstance();
@@ -241,14 +269,17 @@ export class GraphQLAPIClass {
 			variables,
 		};
 
-		const init = {
-			headers,
-			body,
-			signerServiceInfo: {
-				service: !customGraphqlEndpoint ? 'appsync' : 'execute-api',
-				region: !customGraphqlEndpoint ? region : customEndpointRegion,
+		const init = Object.assign(
+			{
+				headers,
+				body,
+				signerServiceInfo: {
+					service: !customGraphqlEndpoint ? 'appsync' : 'execute-api',
+					region: !customGraphqlEndpoint ? region : customEndpointRegion,
+				},
 			},
-		};
+			initParams
+		);
 
 		const endpoint = customGraphqlEndpoint || appSyncGraphqlEndpoint;
 
@@ -265,6 +296,12 @@ export class GraphQLAPIClass {
 		try {
 			response = await this._api.post(endpoint, init);
 		} catch (err) {
+			// If the exception is because user intentionally
+			// cancelled the request, do not modify the exception
+			// so that clients can identify the exception correctly.
+			if (this._api.isCancel(err)) {
+				throw err;
+			}
 			response = {
 				data: {},
 				errors: [new GraphQLError(err.message)],
@@ -278,6 +315,24 @@ export class GraphQLAPIClass {
 		}
 
 		return response;
+	}
+
+	/**
+	 * Checks to see if an error thrown is from an api request cancellation
+	 * @param {any} error - Any error
+	 * @return {boolean} - A boolean indicating if the error was from an api request cancellation
+	 */
+	isCancel(error) {
+		return this._api.isCancel(error);
+	}
+
+	/**
+	 * Cancels an inflight request. Only applicable for graphql queries and mutations
+	 * @param {any} request - request to cancel
+	 * @return {boolean} - A boolean indicating if the request was cancelled
+	 */
+	cancel(request: Promise<any>, message?: string) {
+		return this._api.cancel(request, message);
 	}
 
 	private _graphqlSubscribe(
@@ -316,10 +371,10 @@ export class GraphQLAPIClass {
 	 * @private
 	 */
 	_ensureCredentials() {
-		return Credentials.get()
+		return this.Credentials.get()
 			.then(credentials => {
 				if (!credentials) return false;
-				const cred = Credentials.shear(credentials);
+				const cred = this.Credentials.shear(credentials);
 				logger.debug('set credentials for api', cred);
 
 				return true;
@@ -332,3 +387,4 @@ export class GraphQLAPIClass {
 }
 
 export const GraphQLAPI = new GraphQLAPIClass(null);
+Amplify.register(GraphQLAPI);
