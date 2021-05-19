@@ -14,6 +14,8 @@
 import {
 	ConsoleLogger as Logger,
 	getAmplifyUserAgent,
+	Platform,
+	Credentials,
 } from '@aws-amplify/core';
 import {
 	S3Client,
@@ -28,16 +30,14 @@ import {
 	AbortMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
 import { AxiosHttpHandler, SEND_PROGRESS_EVENT } from './axios-http-handler';
-import { fromString } from '@aws-sdk/util-buffer-from';
 import * as events from 'events';
-import { parseUrl } from '@aws-sdk/url-parser-node';
-import { httpHandlerOptions } from './httpHandlerOptions.native';
+import { streamCollector } from '@aws-sdk/fetch-http-handler';
 
 const logger = new Logger('AWSS3ProviderManagedUpload');
 
 const localTestingStorageEndpoint = 'http://localhost:20005';
 
-const SET_CONTENT_LENGTH_HEADER = 'SET_CONTENT_LENGTH';
+const SET_CONTENT_LENGTH_HEADER = 'contentLengthMiddleware';
 export declare interface Part {
 	bodyPart: any;
 	partNumber: number;
@@ -70,11 +70,13 @@ export class AWSS3ProviderManagedUpload {
 	}
 
 	public async upload() {
-		this.body = this.validateAndSanitizeBody(this.params.Body);
+		this.body = await this.validateAndSanitizeBody(this.params.Body);
 		this.totalBytesToUpload = this.byteLength(this.body);
 		if (this.totalBytesToUpload <= this.minPartSize) {
+			// Multipart upload is not required. Upload the sanitized body as is
+			this.params.Body = this.body;
 			const putObjectCommand = new PutObjectCommand(this.params);
-			const s3 = this._createNewS3Client(this.opts, this.emitter);
+			const s3 = await this._createNewS3Client(this.opts, this.emitter);
 			return s3.send(putObjectCommand);
 		} else {
 			// Step 1: Initiate the multi part upload
@@ -133,12 +135,10 @@ export class AWSS3ProviderManagedUpload {
 	}
 
 	private async createMultiPartUpload() {
-		const createMultiPartUploadCommand = new CreateMultipartUploadCommand({
-			Bucket: this.params.Bucket,
-			Key: this.params.Key,
-		});
-		const s3 = this._createNewS3Client(this.opts);
-		s3.middlewareStack.remove(SET_CONTENT_LENGTH_HEADER);
+		const createMultiPartUploadCommand = new CreateMultipartUploadCommand(
+			this.params
+		);
+		const s3 = await this._createNewS3Client(this.opts);
 		const response = await s3.send(createMultiPartUploadCommand);
 		logger.debug(response.UploadId);
 		return response.UploadId;
@@ -160,8 +160,7 @@ export class AWSS3ProviderManagedUpload {
 				Bucket: this.params.Bucket,
 			};
 			const uploadPartCommand = new UploadPartCommand(uploadPartCommandInput);
-			const s3 = this._createNewS3Client(this.opts, part.emitter);
-			s3.middlewareStack.remove(SET_CONTENT_LENGTH_HEADER);
+			const s3 = await this._createNewS3Client(this.opts, part.emitter);
 			promises.push(s3.send(uploadPartCommand));
 		}
 		try {
@@ -193,10 +192,18 @@ export class AWSS3ProviderManagedUpload {
 			MultipartUpload: { Parts: this.multiPartMap },
 		};
 		const completeUploadCommand = new CompleteMultipartUploadCommand(input);
-		const s3 = this._createNewS3Client(this.opts);
-		s3.middlewareStack.remove(SET_CONTENT_LENGTH_HEADER);
-		const data = await s3.send(completeUploadCommand);
-		return data.Key;
+		const s3 = await this._createNewS3Client(this.opts);
+		try {
+			const data = await s3.send(completeUploadCommand);
+			return data.Key;
+		} catch (error) {
+			logger.error(
+				'error happened while finishing the upload. Cancelling the multipart upload',
+				error
+			);
+			this.cancelUpload();
+			return;
+		}
 	}
 
 	private async checkIfUploadCancelled(uploadId: string) {
@@ -228,8 +235,7 @@ export class AWSS3ProviderManagedUpload {
 			UploadId: uploadId,
 		};
 
-		const s3 = this._createNewS3Client(this.opts);
-		s3.middlewareStack.remove(SET_CONTENT_LENGTH_HEADER);
+		const s3 = await this._createNewS3Client(this.opts);
 		await s3.send(new AbortMultipartUploadCommand(input));
 
 		// verify that all parts are removed.
@@ -260,61 +266,80 @@ export class AWSS3ProviderManagedUpload {
 		});
 	}
 
-	private byteLength(inputString: any) {
-		if (inputString === null || inputString === undefined) return 0;
-		if (typeof inputString.byteLength === 'number') {
-			return inputString.byteLength;
-		} else if (typeof inputString.length === 'number') {
-			return inputString.length;
-		} else if (typeof inputString.size === 'number') {
-			return inputString.size;
-		} else if (typeof inputString.path === 'string') {
+	private byteLength(input: any) {
+		if (input === null || input === undefined) return 0;
+		if (typeof input.byteLength === 'number') {
+			return input.byteLength;
+		} else if (typeof input.length === 'number') {
+			return input.length;
+		} else if (typeof input.size === 'number') {
+			return input.size;
+		} else if (typeof input.path === 'string') {
 			/* NodeJs Support
-			return require('fs').lstatSync(inputString.path).size;
+			return require('fs').lstatSync(input.path).size;
 			*/
 		} else {
-			throw new Error('Cannot determine length of ' + inputString);
+			throw new Error('Cannot determine length of ' + input);
 		}
 	}
 
-	private validateAndSanitizeBody(body: any): any {
-		if (typeof File !== 'undefined' && body instanceof File) {
-			// Browser file
+	private async validateAndSanitizeBody(body: any): Promise<any> {
+		if (this.isGenericObject(body)) {
+			// Any javascript object
+			return JSON.stringify(body);
+		} else if (this.isBlob(body)) {
+			// If it's a blob, we need to convert it to an array buffer as axios has issues
+			// with correctly identifying blobs in *react native* environment. For more
+			// details see https://github.com/aws-amplify/amplify-js/issues/5311
+			if (Platform.isReactNative) {
+				return await streamCollector(body);
+			}
 			return body;
-		} /* NodeJS Support else if (
+		} else {
+			// Files, arrayBuffer etc
+			return body;
+		}
+		/* TODO: streams and files for nodejs 
+		if (
 			typeof body.path === 'string' &&
 			require('fs').lstatSync(body.path).size > 0
 		) {
 			return body;
-		} */ else if (
-			typeof body === 'string'
-		) {
-			// String blob
-			return fromString(body);
-		} else {
-			// Any javascript object
-			return fromString(JSON.stringify(body));
+		} */
+	}
+
+	private isBlob(body: any) {
+		return typeof Blob !== 'undefined' && body instanceof Blob;
+	}
+
+	private isGenericObject(body: any) {
+		if (body !== null && typeof body === 'object') {
+			try {
+				return !(this.byteLength(body) >= 0);
+			} catch (error) {
+				// If we cannot determine the length of the body, consider it
+				// as a generic object and upload a stringified version of it
+				return true;
+			}
 		}
-		// TODO: streams for nodejs
+		return false;
 	}
 
 	/**
 	 * @private
 	 * creates an S3 client with new V3 aws sdk
 	 */
-	protected _createNewS3Client(config, emitter?) {
-		const {
-			region,
-			credentials,
-			dangerouslyConnectToHttpEndpointForTesting,
-		} = config;
+	protected async _createNewS3Client(config, emitter?) {
+		const credentials = await this._getCredentials();
+		const { region, dangerouslyConnectToHttpEndpointForTesting } = config;
 		let localTestingConfig = {};
 
 		if (dangerouslyConnectToHttpEndpointForTesting) {
 			localTestingConfig = {
 				endpoint: localTestingStorageEndpoint,
-				s3BucketEndpoint: true,
-				s3ForcePathStyle: true,
+				tls: false,
+				bucketEndpoint: false,
+				forcePathStyle: true,
 			};
 		}
 
@@ -322,10 +347,27 @@ export class AWSS3ProviderManagedUpload {
 			region,
 			credentials,
 			...localTestingConfig,
-			requestHandler: new AxiosHttpHandler(httpHandlerOptions, emitter),
+			requestHandler: new AxiosHttpHandler({}, emitter),
 			customUserAgent: getAmplifyUserAgent(),
-			urlParser: parseUrl,
 		});
+		client.middlewareStack.remove(SET_CONTENT_LENGTH_HEADER);
 		return client;
+	}
+
+	/**
+	 * @private
+	 */
+	_getCredentials() {
+		return Credentials.get()
+			.then(credentials => {
+				if (!credentials) return false;
+				const cred = Credentials.shear(credentials);
+				logger.debug('set credentials for storage', cred);
+				return cred;
+			})
+			.catch(error => {
+				logger.warn('ensure credentials error', error);
+				return false;
+			});
 	}
 }

@@ -16,12 +16,12 @@ const logger = new Logger('amplify-amazon-button');
 export class AmplifyAmazonButton {
   /** App-specific client ID from Google */
   @Prop() clientId: FederatedConfig['amazonClientId'];
-  /** Passed from the Authenticator component in order to change Authentication state
+  /** Auth state change handler for this component
    * e.g. SignIn -> 'Create Account' link -> SignUp
    */
   @Prop() handleAuthStateChange: AuthStateHandler = dispatchAuthStateChangeEvent;
 
-  federatedSignIn = response => {
+  private federatedSignIn = response => {
     const { access_token, expires_in } = response;
 
     if (!access_token) {
@@ -56,7 +56,7 @@ export class AmplifyAmazonButton {
   /**
    * @see https://developer.amazon.com/docs/login-with-amazon/install-sdk-javascript.html
    */
-  signInWithAmazon(event) {
+  private signInWithAmazon(event) {
     event.preventDefault();
 
     window['amazon'].Login.setClientId(this.clientId);

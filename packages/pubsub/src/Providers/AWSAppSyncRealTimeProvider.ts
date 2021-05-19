@@ -29,7 +29,7 @@ import {
 import Cache from '@aws-amplify/cache';
 import Auth from '@aws-amplify/auth';
 import { AbstractPubSubProvider } from './PubSubProvider';
-import { CONTROL_MSG } from '@aws-amplify/pubsub';
+import { CONTROL_MSG } from '../index';
 
 const logger = new Logger('AWSAppSyncRealTimeProvider');
 
@@ -217,6 +217,10 @@ export class AWSAppSyncRealTimeProvider extends AbstractPubSubProvider {
 		});
 	}
 
+	protected get isSSLEnabled() {
+		return !this.options
+			.aws_appsync_dangerously_connect_to_http_endpoint_for_testing;
+	}
 	private async _startSubscriptionWithAWSAppSyncRealTime({
 		options,
 		observer,
@@ -230,6 +234,7 @@ export class AWSAppSyncRealTimeProvider extends AbstractPubSubProvider {
 			apiKey,
 			region,
 			graphql_headers = () => ({}),
+			additionalHeaders = {},
 		} = options;
 
 		const subscriptionState: SUBSCRIPTION_STATUS = SUBSCRIPTION_STATUS.PENDING;
@@ -259,6 +264,7 @@ export class AWSAppSyncRealTimeProvider extends AbstractPubSubProvider {
 				region,
 			})),
 			...(await graphql_headers()),
+			...additionalHeaders,
 			[USER_AGENT_HEADER]: Constants.userAgent,
 		};
 
@@ -327,7 +333,9 @@ export class AWSAppSyncRealTimeProvider extends AbstractPubSubProvider {
 				this._timeoutStartSubscriptionAck.call(this, subscriptionId);
 			}, START_ACK_TIMEOUT),
 		});
-		this.awsRealTimeSocket.send(stringToAWSRealTime);
+		if (this.awsRealTimeSocket) {
+			this.awsRealTimeSocket.send(stringToAWSRealTime);
+		}
 	}
 
 	// Waiting that subscription has been connected before trying to unsubscribe
@@ -444,7 +452,7 @@ export class AWSAppSyncRealTimeProvider extends AbstractPubSubProvider {
 			}
 			clearTimeout(startAckTimeoutId);
 			dispatchApiEvent(
-				'connected',
+				CONTROL_MSG.SUBSCRIPTION_ACK,
 				{ query, variables },
 				'Connection established for subscription'
 			);
@@ -505,7 +513,7 @@ export class AWSAppSyncRealTimeProvider extends AbstractPubSubProvider {
 	private _errorDisconnect(msg: string) {
 		logger.debug(`Disconnect error: ${msg}`);
 		this.subscriptionObserverMap.forEach(({ observer }) => {
-			if (!observer.closed) {
+			if (observer && !observer.closed) {
 				observer.error({
 					errors: [{ ...new GraphQLError(msg) }],
 				});
@@ -567,8 +575,10 @@ export class AWSAppSyncRealTimeProvider extends AbstractPubSubProvider {
 				try {
 					this.socketStatus = SOCKET_STATUS.CONNECTING;
 					// Creating websocket url with required query strings
+					const protocol = this.isSSLEnabled ? 'wss://' : 'ws://';
 					const discoverableEndpoint = appSyncGraphqlEndpoint
-						.replace('https://', 'wss://')
+						.replace('https://', protocol)
+						.replace('http://', protocol)
 						.replace('appsync-api', 'appsync-realtime-api')
 						.replace('gogi-beta', 'grt-beta');
 
@@ -675,6 +685,10 @@ export class AWSAppSyncRealTimeProvider extends AbstractPubSubProvider {
 								logger.debug(err);
 								this._errorDisconnect(CONTROL_MSG.CONNECTION_CLOSED);
 							};
+							this.awsRealTimeSocket.onclose = event => {
+								logger.debug(`WebSocket closed ${event.reason}`);
+								this._errorDisconnect(CONTROL_MSG.CONNECTION_CLOSED);
+							};
 							res('Cool, connected to AWS AppSyncRealTime');
 							return;
 						}
@@ -766,13 +780,22 @@ export class AWSAppSyncRealTimeProvider extends AbstractPubSubProvider {
 	}
 
 	private async _awsRealTimeOPENIDHeader({ host }) {
+		let token;
+		// backwards compatibility
 		const federatedInfo = await Cache.getItem('federatedInfo');
-
-		if (!federatedInfo || !federatedInfo.token) {
+		if (federatedInfo) {
+			token = federatedInfo.token;
+		} else {
+			const currentUser = await Auth.currentAuthenticatedUser();
+			if (currentUser) {
+				token = currentUser.token;
+			}
+		}
+		if (!token) {
 			throw new Error('No federated jwt');
 		}
 		return {
-			Authorization: federatedInfo.token,
+			Authorization: token,
 			host,
 		};
 	}

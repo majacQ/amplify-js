@@ -5,27 +5,29 @@
  * It contains typing information for all components that exist in this project.
  */
 import { HTMLStencilElement, JSXBase } from "@stencil/core/internal";
-import { AuthState, AuthStateHandler, CognitoUserInterface, FederatedConfig, MFATypesInterface, UsernameAliasStrings, } from "./common/types/auth-types";
-import { FormFieldTypes, } from "./components/amplify-auth-fields/amplify-auth-fields-interface";
-import { ButtonTypes, ButtonVariant, TextFieldTypes, } from "./common/types/ui-types";
-import { FunctionalComponent, } from "@stencil/core";
-import { CountryCodeDialOptions, } from "./components/amplify-country-dial-code/amplify-country-dial-code-interface";
-import { IconNameType, } from "./components/amplify-icon/icons";
-import { SelectOptionsNumber, SelectOptionsString, } from "./components/amplify-select/amplify-select-interface";
+import { AuthState, AuthStateHandler, CognitoUserInterface, FederatedConfig, MFATypesInterface, UsernameAliasStrings } from "./common/types/auth-types";
+import { FormFieldTypes } from "./components/amplify-auth-fields/amplify-auth-fields-interface";
+import { ButtonTypes, ButtonVariant, InputEvent, TextFieldTypes } from "./common/types/ui-types";
+import { IconNameType } from "./components/amplify-icon/icons";
+import { ChatResult } from "./common/types/interactions-types";
+import { FunctionalComponent } from "@stencil/core";
+import { CountryCodeDialOptions } from "./components/amplify-country-dial-code/amplify-country-dial-code-interface";
+import { AccessLevel, StorageObject } from "./common/types/storage-types";
+import { SelectOptionsNumber, SelectOptionsString } from "./components/amplify-select/amplify-select-interface";
 export namespace Components {
     interface AmplifyAmazonButton {
         /**
           * App-specific client ID from Google
          */
-        "clientId": FederatedConfig["amazonClientId"];
+        "clientId": FederatedConfig['amazonClientId'];
         /**
-          * Passed from the Authenticator component in order to change Authentication state e.g. SignIn -> 'Create Account' link -> SignUp
+          * Auth state change handler for this component e.g. SignIn -> 'Create Account' link -> SignUp
          */
         "handleAuthStateChange": AuthStateHandler;
     }
     interface AmplifyAuthFields {
         /**
-          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: 'username'|'password'|'email'|'code'|'default',     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
+          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: string,     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
          */
         "formFields": FormFieldTypes | string[];
     }
@@ -33,7 +35,10 @@ export namespace Components {
         /**
           * See: https://auth0.com/docs/libraries/auth0js/v9#available-parameters
          */
-        "config": FederatedConfig["auth0Config"];
+        "config": FederatedConfig['auth0Config'];
+        /**
+          * Auth state change handler for this component
+         */
         "handleAuthStateChange": AuthStateHandler;
     }
     interface AmplifyAuthenticator {
@@ -41,6 +46,10 @@ export namespace Components {
           * Federated credentials & configuration.
          */
         "federated": FederatedConfig;
+        /**
+          * Callback for Authenticator state machine changes
+         */
+        "handleAuthStateChange": AuthStateHandler;
         /**
           * Initial starting state of the Authenticator component. E.g. If `signup` is passed the default component is set to AmplifySignUp
          */
@@ -60,13 +69,55 @@ export namespace Components {
          */
         "handleButtonClick": (evt: Event) => void;
         /**
+          * Name of icon to be placed inside the button
+         */
+        "icon"?: IconNameType;
+        /**
           * Type of the button: 'button', 'submit' or 'reset'
          */
         "type": ButtonTypes;
         /**
-          * Variant of a button: 'button' | 'anchor'
+          * Variant of a button: 'button' | 'anchor | 'icon'
          */
         "variant": ButtonVariant;
+    }
+    interface AmplifyChatbot {
+        /**
+          * Name of the bot
+         */
+        "botName": string;
+        /**
+          * Text placed in the top header
+         */
+        "botTitle": string;
+        /**
+          * Clear messages when conversation finishes
+         */
+        "clearOnComplete": boolean;
+        /**
+          * Continue listening to users after they send the message
+         */
+        "conversationModeOn": boolean;
+        /**
+          * Noise threshold between -1 and 1. Anything below is considered a silence.
+         */
+        "silenceThreshold": number;
+        /**
+          * Amount of silence (in ms) to wait for
+         */
+        "silenceTime": number;
+        /**
+          * Whether text chat is enabled
+         */
+        "textEnabled": boolean;
+        /**
+          * Whether voice chat is enabled
+         */
+        "voiceEnabled": boolean;
+        /**
+          * Greeting message displayed to users
+         */
+        "welcomeMessage": string;
     }
     interface AmplifyCheckbox {
         /**
@@ -134,11 +185,11 @@ export namespace Components {
     }
     interface AmplifyConfirmSignIn {
         /**
-          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: 'username'|'password'|'email'|'code'|'default',     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
+          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: string,     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
          */
         "formFields": FormFieldTypes | string[];
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Auth state change handler for this component
          */
         "handleAuthStateChange": AuthStateHandler;
         /**
@@ -157,18 +208,14 @@ export namespace Components {
           * Cognito user signing in
          */
         "user": CognitoUserInterface;
-        /**
-          * Engages when invalid actions occur, such as missing field, etc.
-         */
-        "validationErrors": string;
     }
     interface AmplifyConfirmSignUp {
         /**
-          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: 'username'|'password'|'email'|'code'|'default',     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
+          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: string,     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
          */
         "formFields": FormFieldTypes | string[];
         /**
-          * Passed from the Authenticator component in order to change Authentication states e.g. SignIn -> 'Create Account' link -> SignUp
+          * Auth state change handler for this components e.g. SignIn -> 'Create Account' link -> SignUp
          */
         "handleAuthStateChange": AuthStateHandler;
         /**
@@ -191,12 +238,14 @@ export namespace Components {
           * Username Alias is used to setup authentication with `username`, `email` or `phone_number`
          */
         "usernameAlias": UsernameAliasStrings;
-        /**
-          * Engages when invalid actions occur, such as missing field, etc.
-         */
-        "validationErrors": string;
+    }
+    interface AmplifyContainer {
     }
     interface AmplifyCountryDialCode {
+        /**
+          * Default selected dial code
+         */
+        "dialCode": string | number;
         /**
           * The ID of the field.  Should match with its corresponding input's ID.
          */
@@ -248,9 +297,9 @@ export namespace Components {
         /**
           * App-specific client ID from Facebook
          */
-        "appId": FederatedConfig["facebookAppId"];
+        "appId": FederatedConfig['facebookAppId'];
         /**
-          * Passed from the Authenticator component in order to change Authentication state e.g. SignIn -> 'Create Account' link -> SignUp
+          * Auth state change handler for this component e.g. SignIn -> 'Create Account' link -> SignUp
          */
         "handleAuthStateChange": AuthStateHandler;
     }
@@ -264,7 +313,7 @@ export namespace Components {
          */
         "federated": FederatedConfig;
         /**
-          * Passed from the Authenticator component in order to change Authentication state e.g. SignIn -> 'Create Account' link -> SignUp
+          * Auth state change handler for this component e.g. SignIn -> 'Create Account' link -> SignUp
          */
         "handleAuthStateChange": AuthStateHandler;
     }
@@ -282,9 +331,9 @@ export namespace Components {
         /**
           * The form fields displayed inside of the forgot password form
          */
-        "formFields": FormFieldTypes;
+        "formFields": FormFieldTypes | string[];
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Auth state change handler for this component
          */
         "handleAuthStateChange": AuthStateHandler;
         /**
@@ -299,6 +348,10 @@ export namespace Components {
           * The header text of the forgot password section
          */
         "headerText": string;
+        /**
+          * The text displayed inside of the send code button for the form
+         */
+        "sendButtonText": string;
         /**
           * The text displayed inside of the submit button for the form
          */
@@ -318,7 +371,7 @@ export namespace Components {
          */
         "disabled"?: boolean;
         /**
-          * The ID of the field.  Should match with its corresponding input's ID.
+          * The ID of the field. Should match with its corresponding input's ID.
          */
         "fieldId": string;
         /**
@@ -326,7 +379,7 @@ export namespace Components {
          */
         "handleInputChange"?: (inputEvent: Event) => void;
         /**
-          * The text of a hint to the user as to how to fill out the input.  Goes just below the input.
+          * The text of a hint to the user as to how to fill out the input. Goes just below the input.
          */
         "hint": string | FunctionalComponent | null;
         /**
@@ -334,7 +387,7 @@ export namespace Components {
          */
         "inputProps"?: object;
         /**
-          * The text of the label.  Goes above the input. Ex: 'First name'
+          * The text of the label. Goes above the input. Ex: 'First name'
          */
         "label": string | null;
         /**
@@ -388,15 +441,15 @@ export namespace Components {
         /**
           * App-specific client ID from Google
          */
-        "clientId": FederatedConfig["googleClientId"];
+        "clientId": FederatedConfig['googleClientId'];
         /**
-          * Passed from the Authenticator component in order to change Authentication state e.g. SignIn -> 'Create Account' link -> SignUp
+          * Auth state change handler for this component e.g. SignIn -> 'Create Account' link -> SignUp
          */
         "handleAuthStateChange": AuthStateHandler;
     }
     interface AmplifyGreetings {
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Auth state change handler for this component
          */
         "handleAuthStateChange": AuthStateHandler;
         /**
@@ -404,9 +457,9 @@ export namespace Components {
          */
         "logo": FunctionalComponent | null;
         /**
-          * Used for the username to be passed to resend code
+          * Username displayed in the greetings
          */
-        "user": CognitoUserInterface;
+        "username": string;
     }
     interface AmplifyHint {
     }
@@ -417,8 +470,17 @@ export namespace Components {
         "name": IconNameType;
     }
     interface AmplifyIconButton {
+        /**
+          * (Optional) Whether or not to show the tooltip automatically
+         */
         "autoShowTooltip": boolean;
+        /**
+          * The name of the icon used inside of the button
+         */
         "name": IconNameType;
+        /**
+          * (Optional) The tooltip that will show on hover of the button
+         */
         "tooltip": string | null;
     }
     interface AmplifyInput {
@@ -437,7 +499,7 @@ export namespace Components {
         /**
           * The callback, called when the input is modified by the user.
          */
-        "handleInputChange"?: (inputEvent: Event) => void;
+        "handleInputChange"?: (inputEvent: InputEvent) => void;
         /**
           * Attributes places on the input element: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/input#Attributes
          */
@@ -460,9 +522,15 @@ export namespace Components {
         "value": string;
     }
     interface AmplifyLabel {
+        /**
+          * Reflects the value of the for content property of html element
+         */
         "htmlFor": string;
     }
     interface AmplifyLink {
+        /**
+          * The link role is used to identify an element that creates a hyperlink to a resource that is in the application or external
+         */
         "role": string;
     }
     interface AmplifyLoadingSpinner {
@@ -470,7 +538,10 @@ export namespace Components {
     interface AmplifyNav {
     }
     interface AmplifyOauthButton {
-        "config": FederatedConfig["oauthConfig"];
+        /**
+          * Federated credentials & configuration.
+         */
+        "config": FederatedConfig['oauthConfig'];
     }
     interface AmplifyPasswordField {
         /**
@@ -512,6 +583,10 @@ export namespace Components {
     }
     interface AmplifyPhoneField {
         /**
+          * Default dial code in the phone field
+         */
+        "dialCode"?: string | number;
+        /**
           * Will disable the input if set to true
          */
         "disabled"?: boolean;
@@ -548,6 +623,46 @@ export namespace Components {
          */
         "value": string;
     }
+    interface AmplifyPhotoPicker {
+        /**
+          * Picker button text as string
+         */
+        "buttonText"?: string;
+        /**
+          * Function that handles file pick onClick
+         */
+        "handleClick"?: (file: File) => void;
+        /**
+          * Header Hint value in string
+         */
+        "headerHint"?: string;
+        /**
+          * Title string value
+         */
+        "headerTitle"?: string;
+        /**
+          * Placeholder hint that goes under the placeholder image
+         */
+        "placeholderHint"?: string;
+        /**
+          * Source of the image to be previewed
+         */
+        "previewSrc"?: string | object;
+    }
+    interface AmplifyPicker {
+        /**
+          * File input accept value
+         */
+        "acceptValue": string;
+        /**
+          * File input onChange handler
+         */
+        "inputHandler": (e: Event) => void;
+        /**
+          * Picker button text
+         */
+        "pickerText": string;
+    }
     interface AmplifyRadioButton {
         /**
           * If `true`, the radio button is selected.
@@ -565,6 +680,10 @@ export namespace Components {
           * The callback, called when the input is modified by the user.
          */
         "handleInputChange"?: (inputEvent: Event) => void;
+        /**
+          * Attributes places on the input element: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/input#Attributes
+         */
+        "inputProps"?: object;
         /**
           * Label for the radio button
          */
@@ -588,7 +707,7 @@ export namespace Components {
          */
         "formFields": FormFieldTypes;
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Auth state change handler for this component
          */
         "handleAuthStateChange": AuthStateHandler;
         /**
@@ -608,7 +727,204 @@ export namespace Components {
          */
         "user": CognitoUserInterface;
     }
+    interface AmplifyS3Album {
+        /**
+          * The content type header used when uploading to S3
+         */
+        "contentType": string;
+        /**
+          * Callback used to generate custom key value
+         */
+        "fileToKey": (data: object) => string | string;
+        /**
+          * Filter to be applied on album list
+         */
+        "filter": (list: StorageObject[]) => StorageObject[];
+        /**
+          * Function executed when error occurs for the s3-image
+         */
+        "handleOnError": (event: Event) => void;
+        /**
+          * Function executed when s3-image loads
+         */
+        "handleOnLoad": (event: Event) => void;
+        /**
+          * Cognito identity id of the another user's image list
+         */
+        "identityId": string;
+        /**
+          * The access level of the files
+         */
+        "level": AccessLevel;
+        /**
+          * String representing directory location of image files to be listed
+         */
+        "path": string;
+        /**
+          * Boolean to enable or disable picker
+         */
+        "picker": boolean;
+        /**
+          * Picker button text
+         */
+        "pickerText": string;
+        /**
+          * Sort to be applied on album list
+         */
+        "sort": (list: StorageObject[]) => StorageObject[];
+        /**
+          * Whether or not to use track the get/put of the listing of images
+         */
+        "track": boolean;
+    }
+    interface AmplifyS3Image {
+        /**
+          * Image body content to be uploaded
+         */
+        "body": object;
+        /**
+          * The content type header used when uploading to S3
+         */
+        "contentType": string;
+        /**
+          * Function executed when error occurs for the image
+         */
+        "handleOnError": (event: Event) => void;
+        /**
+          * Function executed when image loads
+         */
+        "handleOnLoad": (event: Event) => void;
+        /**
+          * Cognito identity id of the another user's image
+         */
+        "identityId": string;
+        /**
+          * The key of the image object in S3
+         */
+        "imgKey": string;
+        /**
+          * The access level of the image
+         */
+        "level": AccessLevel;
+        /**
+          * String representing directory location to image file
+         */
+        "path": string;
+        /**
+          * Whether or not to use track on get/put of the image
+         */
+        "track": boolean;
+    }
+    interface AmplifyS3ImagePicker {
+        /**
+          * Upload Button Text as string
+         */
+        "buttonText"?: string;
+        /**
+          * The content type header used when uploading to S3
+         */
+        "contentType": string;
+        /**
+          * Callback used to generate custom key value
+         */
+        "fileToKey": (data: object) => string | string;
+        /**
+          * Header Hint value in string
+         */
+        "headerHint"?: string;
+        /**
+          * Title string value
+         */
+        "headerTitle"?: string;
+        /**
+          * Cognito identity id of the another user's image
+         */
+        "identityId": string;
+        /**
+          * The access level of the image
+         */
+        "level": AccessLevel;
+        /**
+          * String representing directory location to image file
+         */
+        "path": string;
+        /**
+          * Placeholder hint that goes under the placeholder image
+         */
+        "placeholderHint"?: string;
+        /**
+          * Whether or not to use track the get/put of the image
+         */
+        "track": boolean;
+    }
+    interface AmplifyS3Text {
+        /**
+          * Text body content to be uploaded
+         */
+        "body": object;
+        /**
+          * The content type header used when uploading to S3
+         */
+        "contentType": string;
+        /**
+          * Fallback content
+         */
+        "fallbackText": string;
+        /**
+          * Cognito identity id of the another user's text file
+         */
+        "identityId": string;
+        /**
+          * The access level of the text file
+         */
+        "level": AccessLevel;
+        /**
+          * String representing directory location to text file
+         */
+        "path": string;
+        /**
+          * The key of the text object in S3
+         */
+        "textKey": string;
+        /**
+          * Whether or not to use track the get/put of the text file
+         */
+        "track": boolean;
+    }
+    interface AmplifyS3TextPicker {
+        /**
+          * The content type header used when uploading to S3
+         */
+        "contentType": string;
+        /**
+          * Fallback content for aplify-s3-text
+         */
+        "fallbackText": string;
+        /**
+          * Callback used to generate custom key value
+         */
+        "fileToKey": (data: object) => string | string;
+        /**
+          * Cognito identity id of the another user's text file
+         */
+        "identityId": string;
+        /**
+          * The access level of the text file
+         */
+        "level": AccessLevel;
+        /**
+          * String representing directory location to text file
+         */
+        "path": string;
+        /**
+          * Whether or not to use track the get/put of the text file
+         */
+        "track": boolean;
+    }
     interface AmplifySection {
+        /**
+          * Equivalent to html section role
+         */
         "role": string;
     }
     interface AmplifySelect {
@@ -624,6 +940,10 @@ export namespace Components {
           * The options of the select input. Must be an Array of Objects with an Object shape of {label: string, value: string|number}
          */
         "options": SelectOptionsString | SelectOptionsNumber;
+        /**
+          * Default selected option
+         */
+        "selected"?: string | number;
     }
     interface AmplifySelectMfaType {
         /**
@@ -645,11 +965,11 @@ export namespace Components {
          */
         "federated": FederatedConfig;
         /**
-          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: 'username'|'password'|'email'|'code'|'default',     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
+          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: string,     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
          */
         "formFields": FormFieldTypes | string[];
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Auth state change handler for this component
          */
         "handleAuthStateChange": AuthStateHandler;
         /**
@@ -661,6 +981,10 @@ export namespace Components {
          */
         "headerText": string;
         /**
+          * Hides the sign up link
+         */
+        "hideSignUp": boolean;
+        /**
           * Used for the submit button text in sign in component
          */
         "submitButtonText": string;
@@ -668,13 +992,12 @@ export namespace Components {
           * Username Alias is used to setup authentication with `username`, `email` or `phone_number`
          */
         "usernameAlias": UsernameAliasStrings;
-        /**
-          * Engages when invalid actions occur, such as missing field, etc.
-         */
-        "validationErrors": string;
     }
     interface AmplifySignInButton {
-        "provider": "amazon" | "auth0" | "facebook" | "google" | "oauth";
+        /**
+          * Specifies the federation provider.
+         */
+        "provider": 'amazon' | 'auth0' | 'facebook' | 'google' | 'oauth';
     }
     interface AmplifySignOut {
         /**
@@ -682,17 +1005,17 @@ export namespace Components {
          */
         "buttonText": string;
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Auth state change handler for this component
          */
         "handleAuthStateChange": AuthStateHandler;
     }
     interface AmplifySignUp {
         /**
-          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: 'username'|'password'|'email'|'code'|'default',     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
+          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: string,     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
          */
         "formFields": FormFieldTypes | string[];
         /**
-          * Passed from the Authenticator component in order to change Authentication state e.g. SignIn -> 'Create Account' link -> SignUp
+          * Auth state change handler for this component e.g. SignIn -> 'Create Account' link -> SignUp
          */
         "handleAuthStateChange": AuthStateHandler;
         /**
@@ -708,7 +1031,7 @@ export namespace Components {
          */
         "headerText": string;
         /**
-          * Used for the submit button text in sign up component
+          * Text used for the sign in hyperlink
          */
         "signInText": string;
         /**
@@ -731,6 +1054,9 @@ export namespace Components {
           * Used in order to add a dismissable `x` for the Toast component
          */
         "handleClose": () => void;
+        /**
+          * Message to be displayed inside the toast
+         */
         "message": string;
     }
     interface AmplifyTooltip {
@@ -745,9 +1071,17 @@ export namespace Components {
     }
     interface AmplifyTotpSetup {
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Auth state change handler for this component
          */
         "handleAuthStateChange": AuthStateHandler;
+        /**
+          * Used for header text in totp setup component
+         */
+        "headerText": string;
+        /**
+          * Used for customizing the issuer string in the qr code image
+         */
+        "issuer": string;
         /**
           * Used in order to configure TOTP for a user
          */
@@ -789,11 +1123,11 @@ export namespace Components {
     }
     interface AmplifyVerifyContact {
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Authentication state handler
          */
         "handleAuthStateChange": AuthStateHandler;
         /**
-          * Used for the username to be passed to resend code
+          * User with unverified contact information
          */
         "user": CognitoUserInterface;
     }
@@ -829,6 +1163,12 @@ declare global {
         prototype: HTMLAmplifyButtonElement;
         new (): HTMLAmplifyButtonElement;
     };
+    interface HTMLAmplifyChatbotElement extends Components.AmplifyChatbot, HTMLStencilElement {
+    }
+    var HTMLAmplifyChatbotElement: {
+        prototype: HTMLAmplifyChatbotElement;
+        new (): HTMLAmplifyChatbotElement;
+    };
     interface HTMLAmplifyCheckboxElement extends Components.AmplifyCheckbox, HTMLStencilElement {
     }
     var HTMLAmplifyCheckboxElement: {
@@ -852,6 +1192,12 @@ declare global {
     var HTMLAmplifyConfirmSignUpElement: {
         prototype: HTMLAmplifyConfirmSignUpElement;
         new (): HTMLAmplifyConfirmSignUpElement;
+    };
+    interface HTMLAmplifyContainerElement extends Components.AmplifyContainer, HTMLStencilElement {
+    }
+    var HTMLAmplifyContainerElement: {
+        prototype: HTMLAmplifyContainerElement;
+        new (): HTMLAmplifyContainerElement;
     };
     interface HTMLAmplifyCountryDialCodeElement extends Components.AmplifyCountryDialCode, HTMLStencilElement {
     }
@@ -979,6 +1325,18 @@ declare global {
         prototype: HTMLAmplifyPhoneFieldElement;
         new (): HTMLAmplifyPhoneFieldElement;
     };
+    interface HTMLAmplifyPhotoPickerElement extends Components.AmplifyPhotoPicker, HTMLStencilElement {
+    }
+    var HTMLAmplifyPhotoPickerElement: {
+        prototype: HTMLAmplifyPhotoPickerElement;
+        new (): HTMLAmplifyPhotoPickerElement;
+    };
+    interface HTMLAmplifyPickerElement extends Components.AmplifyPicker, HTMLStencilElement {
+    }
+    var HTMLAmplifyPickerElement: {
+        prototype: HTMLAmplifyPickerElement;
+        new (): HTMLAmplifyPickerElement;
+    };
     interface HTMLAmplifyRadioButtonElement extends Components.AmplifyRadioButton, HTMLStencilElement {
     }
     var HTMLAmplifyRadioButtonElement: {
@@ -990,6 +1348,36 @@ declare global {
     var HTMLAmplifyRequireNewPasswordElement: {
         prototype: HTMLAmplifyRequireNewPasswordElement;
         new (): HTMLAmplifyRequireNewPasswordElement;
+    };
+    interface HTMLAmplifyS3AlbumElement extends Components.AmplifyS3Album, HTMLStencilElement {
+    }
+    var HTMLAmplifyS3AlbumElement: {
+        prototype: HTMLAmplifyS3AlbumElement;
+        new (): HTMLAmplifyS3AlbumElement;
+    };
+    interface HTMLAmplifyS3ImageElement extends Components.AmplifyS3Image, HTMLStencilElement {
+    }
+    var HTMLAmplifyS3ImageElement: {
+        prototype: HTMLAmplifyS3ImageElement;
+        new (): HTMLAmplifyS3ImageElement;
+    };
+    interface HTMLAmplifyS3ImagePickerElement extends Components.AmplifyS3ImagePicker, HTMLStencilElement {
+    }
+    var HTMLAmplifyS3ImagePickerElement: {
+        prototype: HTMLAmplifyS3ImagePickerElement;
+        new (): HTMLAmplifyS3ImagePickerElement;
+    };
+    interface HTMLAmplifyS3TextElement extends Components.AmplifyS3Text, HTMLStencilElement {
+    }
+    var HTMLAmplifyS3TextElement: {
+        prototype: HTMLAmplifyS3TextElement;
+        new (): HTMLAmplifyS3TextElement;
+    };
+    interface HTMLAmplifyS3TextPickerElement extends Components.AmplifyS3TextPicker, HTMLStencilElement {
+    }
+    var HTMLAmplifyS3TextPickerElement: {
+        prototype: HTMLAmplifyS3TextPickerElement;
+        new (): HTMLAmplifyS3TextPickerElement;
     };
     interface HTMLAmplifySectionElement extends Components.AmplifySection, HTMLStencilElement {
     }
@@ -1075,10 +1463,12 @@ declare global {
         "amplify-auth0-button": HTMLAmplifyAuth0ButtonElement;
         "amplify-authenticator": HTMLAmplifyAuthenticatorElement;
         "amplify-button": HTMLAmplifyButtonElement;
+        "amplify-chatbot": HTMLAmplifyChatbotElement;
         "amplify-checkbox": HTMLAmplifyCheckboxElement;
         "amplify-code-field": HTMLAmplifyCodeFieldElement;
         "amplify-confirm-sign-in": HTMLAmplifyConfirmSignInElement;
         "amplify-confirm-sign-up": HTMLAmplifyConfirmSignUpElement;
+        "amplify-container": HTMLAmplifyContainerElement;
         "amplify-country-dial-code": HTMLAmplifyCountryDialCodeElement;
         "amplify-email-field": HTMLAmplifyEmailFieldElement;
         "amplify-facebook-button": HTMLAmplifyFacebookButtonElement;
@@ -1100,8 +1490,15 @@ declare global {
         "amplify-oauth-button": HTMLAmplifyOauthButtonElement;
         "amplify-password-field": HTMLAmplifyPasswordFieldElement;
         "amplify-phone-field": HTMLAmplifyPhoneFieldElement;
+        "amplify-photo-picker": HTMLAmplifyPhotoPickerElement;
+        "amplify-picker": HTMLAmplifyPickerElement;
         "amplify-radio-button": HTMLAmplifyRadioButtonElement;
         "amplify-require-new-password": HTMLAmplifyRequireNewPasswordElement;
+        "amplify-s3-album": HTMLAmplifyS3AlbumElement;
+        "amplify-s3-image": HTMLAmplifyS3ImageElement;
+        "amplify-s3-image-picker": HTMLAmplifyS3ImagePickerElement;
+        "amplify-s3-text": HTMLAmplifyS3TextElement;
+        "amplify-s3-text-picker": HTMLAmplifyS3TextPickerElement;
         "amplify-section": HTMLAmplifySectionElement;
         "amplify-select": HTMLAmplifySelectElement;
         "amplify-select-mfa-type": HTMLAmplifySelectMfaTypeElement;
@@ -1122,15 +1519,15 @@ declare namespace LocalJSX {
         /**
           * App-specific client ID from Google
          */
-        "clientId"?: FederatedConfig["amazonClientId"];
+        "clientId"?: FederatedConfig['amazonClientId'];
         /**
-          * Passed from the Authenticator component in order to change Authentication state e.g. SignIn -> 'Create Account' link -> SignUp
+          * Auth state change handler for this component e.g. SignIn -> 'Create Account' link -> SignUp
          */
         "handleAuthStateChange"?: AuthStateHandler;
     }
     interface AmplifyAuthFields {
         /**
-          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: 'username'|'password'|'email'|'code'|'default',     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
+          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: string,     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
          */
         "formFields"?: FormFieldTypes | string[];
     }
@@ -1138,7 +1535,10 @@ declare namespace LocalJSX {
         /**
           * See: https://auth0.com/docs/libraries/auth0js/v9#available-parameters
          */
-        "config"?: FederatedConfig["auth0Config"];
+        "config"?: FederatedConfig['auth0Config'];
+        /**
+          * Auth state change handler for this component
+         */
         "handleAuthStateChange"?: AuthStateHandler;
     }
     interface AmplifyAuthenticator {
@@ -1146,6 +1546,10 @@ declare namespace LocalJSX {
           * Federated credentials & configuration.
          */
         "federated"?: FederatedConfig;
+        /**
+          * Callback for Authenticator state machine changes
+         */
+        "handleAuthStateChange"?: AuthStateHandler;
         /**
           * Initial starting state of the Authenticator component. E.g. If `signup` is passed the default component is set to AmplifySignUp
          */
@@ -1165,13 +1569,59 @@ declare namespace LocalJSX {
          */
         "handleButtonClick"?: (evt: Event) => void;
         /**
+          * Name of icon to be placed inside the button
+         */
+        "icon"?: IconNameType;
+        /**
           * Type of the button: 'button', 'submit' or 'reset'
          */
         "type"?: ButtonTypes;
         /**
-          * Variant of a button: 'button' | 'anchor'
+          * Variant of a button: 'button' | 'anchor | 'icon'
          */
         "variant"?: ButtonVariant;
+    }
+    interface AmplifyChatbot {
+        /**
+          * Name of the bot
+         */
+        "botName"?: string;
+        /**
+          * Text placed in the top header
+         */
+        "botTitle"?: string;
+        /**
+          * Clear messages when conversation finishes
+         */
+        "clearOnComplete"?: boolean;
+        /**
+          * Continue listening to users after they send the message
+         */
+        "conversationModeOn"?: boolean;
+        /**
+          * Event emitted when conversation is completed
+         */
+        "onChatCompleted"?: (event: CustomEvent<ChatResult>) => void;
+        /**
+          * Noise threshold between -1 and 1. Anything below is considered a silence.
+         */
+        "silenceThreshold"?: number;
+        /**
+          * Amount of silence (in ms) to wait for
+         */
+        "silenceTime"?: number;
+        /**
+          * Whether text chat is enabled
+         */
+        "textEnabled"?: boolean;
+        /**
+          * Whether voice chat is enabled
+         */
+        "voiceEnabled"?: boolean;
+        /**
+          * Greeting message displayed to users
+         */
+        "welcomeMessage"?: string;
     }
     interface AmplifyCheckbox {
         /**
@@ -1239,11 +1689,11 @@ declare namespace LocalJSX {
     }
     interface AmplifyConfirmSignIn {
         /**
-          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: 'username'|'password'|'email'|'code'|'default',     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
+          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: string,     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
          */
         "formFields"?: FormFieldTypes | string[];
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Auth state change handler for this component
          */
         "handleAuthStateChange"?: AuthStateHandler;
         /**
@@ -1262,18 +1712,14 @@ declare namespace LocalJSX {
           * Cognito user signing in
          */
         "user"?: CognitoUserInterface;
-        /**
-          * Engages when invalid actions occur, such as missing field, etc.
-         */
-        "validationErrors"?: string;
     }
     interface AmplifyConfirmSignUp {
         /**
-          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: 'username'|'password'|'email'|'code'|'default',     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
+          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: string,     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
          */
         "formFields"?: FormFieldTypes | string[];
         /**
-          * Passed from the Authenticator component in order to change Authentication states e.g. SignIn -> 'Create Account' link -> SignUp
+          * Auth state change handler for this components e.g. SignIn -> 'Create Account' link -> SignUp
          */
         "handleAuthStateChange"?: AuthStateHandler;
         /**
@@ -1296,12 +1742,14 @@ declare namespace LocalJSX {
           * Username Alias is used to setup authentication with `username`, `email` or `phone_number`
          */
         "usernameAlias"?: UsernameAliasStrings;
-        /**
-          * Engages when invalid actions occur, such as missing field, etc.
-         */
-        "validationErrors"?: string;
+    }
+    interface AmplifyContainer {
     }
     interface AmplifyCountryDialCode {
+        /**
+          * Default selected dial code
+         */
+        "dialCode"?: string | number;
         /**
           * The ID of the field.  Should match with its corresponding input's ID.
          */
@@ -1353,9 +1801,9 @@ declare namespace LocalJSX {
         /**
           * App-specific client ID from Facebook
          */
-        "appId"?: FederatedConfig["facebookAppId"];
+        "appId"?: FederatedConfig['facebookAppId'];
         /**
-          * Passed from the Authenticator component in order to change Authentication state e.g. SignIn -> 'Create Account' link -> SignUp
+          * Auth state change handler for this component e.g. SignIn -> 'Create Account' link -> SignUp
          */
         "handleAuthStateChange"?: AuthStateHandler;
     }
@@ -1369,7 +1817,7 @@ declare namespace LocalJSX {
          */
         "federated"?: FederatedConfig;
         /**
-          * Passed from the Authenticator component in order to change Authentication state e.g. SignIn -> 'Create Account' link -> SignUp
+          * Auth state change handler for this component e.g. SignIn -> 'Create Account' link -> SignUp
          */
         "handleAuthStateChange"?: AuthStateHandler;
     }
@@ -1387,9 +1835,9 @@ declare namespace LocalJSX {
         /**
           * The form fields displayed inside of the forgot password form
          */
-        "formFields"?: FormFieldTypes;
+        "formFields"?: FormFieldTypes | string[];
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Auth state change handler for this component
          */
         "handleAuthStateChange"?: AuthStateHandler;
         /**
@@ -1404,6 +1852,10 @@ declare namespace LocalJSX {
           * The header text of the forgot password section
          */
         "headerText"?: string;
+        /**
+          * The text displayed inside of the send code button for the form
+         */
+        "sendButtonText"?: string;
         /**
           * The text displayed inside of the submit button for the form
          */
@@ -1423,7 +1875,7 @@ declare namespace LocalJSX {
          */
         "disabled"?: boolean;
         /**
-          * The ID of the field.  Should match with its corresponding input's ID.
+          * The ID of the field. Should match with its corresponding input's ID.
          */
         "fieldId"?: string;
         /**
@@ -1431,7 +1883,7 @@ declare namespace LocalJSX {
          */
         "handleInputChange"?: (inputEvent: Event) => void;
         /**
-          * The text of a hint to the user as to how to fill out the input.  Goes just below the input.
+          * The text of a hint to the user as to how to fill out the input. Goes just below the input.
          */
         "hint"?: string | FunctionalComponent | null;
         /**
@@ -1439,7 +1891,7 @@ declare namespace LocalJSX {
          */
         "inputProps"?: object;
         /**
-          * The text of the label.  Goes above the input. Ex: 'First name'
+          * The text of the label. Goes above the input. Ex: 'First name'
          */
         "label"?: string | null;
         /**
@@ -1493,15 +1945,15 @@ declare namespace LocalJSX {
         /**
           * App-specific client ID from Google
          */
-        "clientId"?: FederatedConfig["googleClientId"];
+        "clientId"?: FederatedConfig['googleClientId'];
         /**
-          * Passed from the Authenticator component in order to change Authentication state e.g. SignIn -> 'Create Account' link -> SignUp
+          * Auth state change handler for this component e.g. SignIn -> 'Create Account' link -> SignUp
          */
         "handleAuthStateChange"?: AuthStateHandler;
     }
     interface AmplifyGreetings {
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Auth state change handler for this component
          */
         "handleAuthStateChange"?: AuthStateHandler;
         /**
@@ -1509,9 +1961,9 @@ declare namespace LocalJSX {
          */
         "logo"?: FunctionalComponent | null;
         /**
-          * Used for the username to be passed to resend code
+          * Username displayed in the greetings
          */
-        "user"?: CognitoUserInterface;
+        "username"?: string;
     }
     interface AmplifyHint {
     }
@@ -1522,8 +1974,17 @@ declare namespace LocalJSX {
         "name"?: IconNameType;
     }
     interface AmplifyIconButton {
+        /**
+          * (Optional) Whether or not to show the tooltip automatically
+         */
         "autoShowTooltip"?: boolean;
+        /**
+          * The name of the icon used inside of the button
+         */
         "name"?: IconNameType;
+        /**
+          * (Optional) The tooltip that will show on hover of the button
+         */
         "tooltip"?: string | null;
     }
     interface AmplifyInput {
@@ -1542,7 +2003,7 @@ declare namespace LocalJSX {
         /**
           * The callback, called when the input is modified by the user.
          */
-        "handleInputChange"?: (inputEvent: Event) => void;
+        "handleInputChange"?: (inputEvent: InputEvent) => void;
         /**
           * Attributes places on the input element: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/input#Attributes
          */
@@ -1551,6 +2012,10 @@ declare namespace LocalJSX {
           * (Optional) String value for the name of the input.
          */
         "name"?: string;
+        /**
+          * Event formSubmit is emitted on keydown 'Enter' on an input and can be listened to by a parent form
+         */
+        "onFormSubmit"?: (event: CustomEvent<any>) => void;
         /**
           * (Optional) The placeholder for the input element.  Using hints is recommended, but placeholders can also be useful to convey information to users.
          */
@@ -1565,9 +2030,15 @@ declare namespace LocalJSX {
         "value"?: string;
     }
     interface AmplifyLabel {
+        /**
+          * Reflects the value of the for content property of html element
+         */
         "htmlFor"?: string;
     }
     interface AmplifyLink {
+        /**
+          * The link role is used to identify an element that creates a hyperlink to a resource that is in the application or external
+         */
         "role"?: string;
     }
     interface AmplifyLoadingSpinner {
@@ -1575,7 +2046,10 @@ declare namespace LocalJSX {
     interface AmplifyNav {
     }
     interface AmplifyOauthButton {
-        "config"?: FederatedConfig["oauthConfig"];
+        /**
+          * Federated credentials & configuration.
+         */
+        "config"?: FederatedConfig['oauthConfig'];
     }
     interface AmplifyPasswordField {
         /**
@@ -1617,6 +2091,10 @@ declare namespace LocalJSX {
     }
     interface AmplifyPhoneField {
         /**
+          * Default dial code in the phone field
+         */
+        "dialCode"?: string | number;
+        /**
           * Will disable the input if set to true
          */
         "disabled"?: boolean;
@@ -1653,6 +2131,46 @@ declare namespace LocalJSX {
          */
         "value"?: string;
     }
+    interface AmplifyPhotoPicker {
+        /**
+          * Picker button text as string
+         */
+        "buttonText"?: string;
+        /**
+          * Function that handles file pick onClick
+         */
+        "handleClick"?: (file: File) => void;
+        /**
+          * Header Hint value in string
+         */
+        "headerHint"?: string;
+        /**
+          * Title string value
+         */
+        "headerTitle"?: string;
+        /**
+          * Placeholder hint that goes under the placeholder image
+         */
+        "placeholderHint"?: string;
+        /**
+          * Source of the image to be previewed
+         */
+        "previewSrc"?: string | object;
+    }
+    interface AmplifyPicker {
+        /**
+          * File input accept value
+         */
+        "acceptValue"?: string;
+        /**
+          * File input onChange handler
+         */
+        "inputHandler"?: (e: Event) => void;
+        /**
+          * Picker button text
+         */
+        "pickerText"?: string;
+    }
     interface AmplifyRadioButton {
         /**
           * If `true`, the radio button is selected.
@@ -1670,6 +2188,10 @@ declare namespace LocalJSX {
           * The callback, called when the input is modified by the user.
          */
         "handleInputChange"?: (inputEvent: Event) => void;
+        /**
+          * Attributes places on the input element: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/input#Attributes
+         */
+        "inputProps"?: object;
         /**
           * Label for the radio button
          */
@@ -1693,7 +2215,7 @@ declare namespace LocalJSX {
          */
         "formFields"?: FormFieldTypes;
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Auth state change handler for this component
          */
         "handleAuthStateChange"?: AuthStateHandler;
         /**
@@ -1713,7 +2235,204 @@ declare namespace LocalJSX {
          */
         "user"?: CognitoUserInterface;
     }
+    interface AmplifyS3Album {
+        /**
+          * The content type header used when uploading to S3
+         */
+        "contentType"?: string;
+        /**
+          * Callback used to generate custom key value
+         */
+        "fileToKey"?: (data: object) => string | string;
+        /**
+          * Filter to be applied on album list
+         */
+        "filter"?: (list: StorageObject[]) => StorageObject[];
+        /**
+          * Function executed when error occurs for the s3-image
+         */
+        "handleOnError"?: (event: Event) => void;
+        /**
+          * Function executed when s3-image loads
+         */
+        "handleOnLoad"?: (event: Event) => void;
+        /**
+          * Cognito identity id of the another user's image list
+         */
+        "identityId"?: string;
+        /**
+          * The access level of the files
+         */
+        "level"?: AccessLevel;
+        /**
+          * String representing directory location of image files to be listed
+         */
+        "path"?: string;
+        /**
+          * Boolean to enable or disable picker
+         */
+        "picker"?: boolean;
+        /**
+          * Picker button text
+         */
+        "pickerText"?: string;
+        /**
+          * Sort to be applied on album list
+         */
+        "sort"?: (list: StorageObject[]) => StorageObject[];
+        /**
+          * Whether or not to use track the get/put of the listing of images
+         */
+        "track"?: boolean;
+    }
+    interface AmplifyS3Image {
+        /**
+          * Image body content to be uploaded
+         */
+        "body"?: object;
+        /**
+          * The content type header used when uploading to S3
+         */
+        "contentType"?: string;
+        /**
+          * Function executed when error occurs for the image
+         */
+        "handleOnError"?: (event: Event) => void;
+        /**
+          * Function executed when image loads
+         */
+        "handleOnLoad"?: (event: Event) => void;
+        /**
+          * Cognito identity id of the another user's image
+         */
+        "identityId"?: string;
+        /**
+          * The key of the image object in S3
+         */
+        "imgKey"?: string;
+        /**
+          * The access level of the image
+         */
+        "level"?: AccessLevel;
+        /**
+          * String representing directory location to image file
+         */
+        "path"?: string;
+        /**
+          * Whether or not to use track on get/put of the image
+         */
+        "track"?: boolean;
+    }
+    interface AmplifyS3ImagePicker {
+        /**
+          * Upload Button Text as string
+         */
+        "buttonText"?: string;
+        /**
+          * The content type header used when uploading to S3
+         */
+        "contentType"?: string;
+        /**
+          * Callback used to generate custom key value
+         */
+        "fileToKey"?: (data: object) => string | string;
+        /**
+          * Header Hint value in string
+         */
+        "headerHint"?: string;
+        /**
+          * Title string value
+         */
+        "headerTitle"?: string;
+        /**
+          * Cognito identity id of the another user's image
+         */
+        "identityId"?: string;
+        /**
+          * The access level of the image
+         */
+        "level"?: AccessLevel;
+        /**
+          * String representing directory location to image file
+         */
+        "path"?: string;
+        /**
+          * Placeholder hint that goes under the placeholder image
+         */
+        "placeholderHint"?: string;
+        /**
+          * Whether or not to use track the get/put of the image
+         */
+        "track"?: boolean;
+    }
+    interface AmplifyS3Text {
+        /**
+          * Text body content to be uploaded
+         */
+        "body"?: object;
+        /**
+          * The content type header used when uploading to S3
+         */
+        "contentType"?: string;
+        /**
+          * Fallback content
+         */
+        "fallbackText"?: string;
+        /**
+          * Cognito identity id of the another user's text file
+         */
+        "identityId"?: string;
+        /**
+          * The access level of the text file
+         */
+        "level"?: AccessLevel;
+        /**
+          * String representing directory location to text file
+         */
+        "path"?: string;
+        /**
+          * The key of the text object in S3
+         */
+        "textKey"?: string;
+        /**
+          * Whether or not to use track the get/put of the text file
+         */
+        "track"?: boolean;
+    }
+    interface AmplifyS3TextPicker {
+        /**
+          * The content type header used when uploading to S3
+         */
+        "contentType"?: string;
+        /**
+          * Fallback content for aplify-s3-text
+         */
+        "fallbackText"?: string;
+        /**
+          * Callback used to generate custom key value
+         */
+        "fileToKey"?: (data: object) => string | string;
+        /**
+          * Cognito identity id of the another user's text file
+         */
+        "identityId"?: string;
+        /**
+          * The access level of the text file
+         */
+        "level"?: AccessLevel;
+        /**
+          * String representing directory location to text file
+         */
+        "path"?: string;
+        /**
+          * Whether or not to use track the get/put of the text file
+         */
+        "track"?: boolean;
+    }
     interface AmplifySection {
+        /**
+          * Equivalent to html section role
+         */
         "role"?: string;
     }
     interface AmplifySelect {
@@ -1729,6 +2448,10 @@ declare namespace LocalJSX {
           * The options of the select input. Must be an Array of Objects with an Object shape of {label: string, value: string|number}
          */
         "options"?: SelectOptionsString | SelectOptionsNumber;
+        /**
+          * Default selected option
+         */
+        "selected"?: string | number;
     }
     interface AmplifySelectMfaType {
         /**
@@ -1750,11 +2473,11 @@ declare namespace LocalJSX {
          */
         "federated"?: FederatedConfig;
         /**
-          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: 'username'|'password'|'email'|'code'|'default',     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
+          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: string,     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
          */
         "formFields"?: FormFieldTypes | string[];
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Auth state change handler for this component
          */
         "handleAuthStateChange"?: AuthStateHandler;
         /**
@@ -1766,6 +2489,10 @@ declare namespace LocalJSX {
          */
         "headerText"?: string;
         /**
+          * Hides the sign up link
+         */
+        "hideSignUp"?: boolean;
+        /**
           * Used for the submit button text in sign in component
          */
         "submitButtonText"?: string;
@@ -1773,13 +2500,12 @@ declare namespace LocalJSX {
           * Username Alias is used to setup authentication with `username`, `email` or `phone_number`
          */
         "usernameAlias"?: UsernameAliasStrings;
-        /**
-          * Engages when invalid actions occur, such as missing field, etc.
-         */
-        "validationErrors"?: string;
     }
     interface AmplifySignInButton {
-        "provider"?: "amazon" | "auth0" | "facebook" | "google" | "oauth";
+        /**
+          * Specifies the federation provider.
+         */
+        "provider"?: 'amazon' | 'auth0' | 'facebook' | 'google' | 'oauth';
     }
     interface AmplifySignOut {
         /**
@@ -1787,17 +2513,17 @@ declare namespace LocalJSX {
          */
         "buttonText"?: string;
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Auth state change handler for this component
          */
         "handleAuthStateChange"?: AuthStateHandler;
     }
     interface AmplifySignUp {
         /**
-          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: 'username'|'password'|'email'|'code'|'default',     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
+          * Form fields allows you to utilize our pre-built components such as username field, code field, password field, email field, etc. by passing an array of strings that you would like the order of the form to be in. If you need more customization, such as changing text for a label or adjust a placeholder, you can follow the structure below in order to do just that. ``` [   {     type: string,     label: string,     placeholder: string,     hint: string | Functional Component | null,     required: boolean   } ] ```
          */
         "formFields"?: FormFieldTypes | string[];
         /**
-          * Passed from the Authenticator component in order to change Authentication state e.g. SignIn -> 'Create Account' link -> SignUp
+          * Auth state change handler for this component e.g. SignIn -> 'Create Account' link -> SignUp
          */
         "handleAuthStateChange"?: AuthStateHandler;
         /**
@@ -1813,7 +2539,7 @@ declare namespace LocalJSX {
          */
         "headerText"?: string;
         /**
-          * Used for the submit button text in sign up component
+          * Text used for the sign in hyperlink
          */
         "signInText"?: string;
         /**
@@ -1836,6 +2562,9 @@ declare namespace LocalJSX {
           * Used in order to add a dismissable `x` for the Toast component
          */
         "handleClose"?: () => void;
+        /**
+          * Message to be displayed inside the toast
+         */
         "message"?: string;
     }
     interface AmplifyTooltip {
@@ -1850,9 +2579,17 @@ declare namespace LocalJSX {
     }
     interface AmplifyTotpSetup {
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Auth state change handler for this component
          */
         "handleAuthStateChange"?: AuthStateHandler;
+        /**
+          * Used for header text in totp setup component
+         */
+        "headerText"?: string;
+        /**
+          * Used for customizing the issuer string in the qr code image
+         */
+        "issuer"?: string;
         /**
           * Used in order to configure TOTP for a user
          */
@@ -1894,11 +2631,11 @@ declare namespace LocalJSX {
     }
     interface AmplifyVerifyContact {
         /**
-          * Passed from the Authenticator component in order to change Authentication state
+          * Authentication state handler
          */
         "handleAuthStateChange"?: AuthStateHandler;
         /**
-          * Used for the username to be passed to resend code
+          * User with unverified contact information
          */
         "user"?: CognitoUserInterface;
     }
@@ -1908,10 +2645,12 @@ declare namespace LocalJSX {
         "amplify-auth0-button": AmplifyAuth0Button;
         "amplify-authenticator": AmplifyAuthenticator;
         "amplify-button": AmplifyButton;
+        "amplify-chatbot": AmplifyChatbot;
         "amplify-checkbox": AmplifyCheckbox;
         "amplify-code-field": AmplifyCodeField;
         "amplify-confirm-sign-in": AmplifyConfirmSignIn;
         "amplify-confirm-sign-up": AmplifyConfirmSignUp;
+        "amplify-container": AmplifyContainer;
         "amplify-country-dial-code": AmplifyCountryDialCode;
         "amplify-email-field": AmplifyEmailField;
         "amplify-facebook-button": AmplifyFacebookButton;
@@ -1933,8 +2672,15 @@ declare namespace LocalJSX {
         "amplify-oauth-button": AmplifyOauthButton;
         "amplify-password-field": AmplifyPasswordField;
         "amplify-phone-field": AmplifyPhoneField;
+        "amplify-photo-picker": AmplifyPhotoPicker;
+        "amplify-picker": AmplifyPicker;
         "amplify-radio-button": AmplifyRadioButton;
         "amplify-require-new-password": AmplifyRequireNewPassword;
+        "amplify-s3-album": AmplifyS3Album;
+        "amplify-s3-image": AmplifyS3Image;
+        "amplify-s3-image-picker": AmplifyS3ImagePicker;
+        "amplify-s3-text": AmplifyS3Text;
+        "amplify-s3-text-picker": AmplifyS3TextPicker;
         "amplify-section": AmplifySection;
         "amplify-select": AmplifySelect;
         "amplify-select-mfa-type": AmplifySelectMfaType;
@@ -1959,10 +2705,12 @@ declare module "@stencil/core" {
             "amplify-auth0-button": LocalJSX.AmplifyAuth0Button & JSXBase.HTMLAttributes<HTMLAmplifyAuth0ButtonElement>;
             "amplify-authenticator": LocalJSX.AmplifyAuthenticator & JSXBase.HTMLAttributes<HTMLAmplifyAuthenticatorElement>;
             "amplify-button": LocalJSX.AmplifyButton & JSXBase.HTMLAttributes<HTMLAmplifyButtonElement>;
+            "amplify-chatbot": LocalJSX.AmplifyChatbot & JSXBase.HTMLAttributes<HTMLAmplifyChatbotElement>;
             "amplify-checkbox": LocalJSX.AmplifyCheckbox & JSXBase.HTMLAttributes<HTMLAmplifyCheckboxElement>;
             "amplify-code-field": LocalJSX.AmplifyCodeField & JSXBase.HTMLAttributes<HTMLAmplifyCodeFieldElement>;
             "amplify-confirm-sign-in": LocalJSX.AmplifyConfirmSignIn & JSXBase.HTMLAttributes<HTMLAmplifyConfirmSignInElement>;
             "amplify-confirm-sign-up": LocalJSX.AmplifyConfirmSignUp & JSXBase.HTMLAttributes<HTMLAmplifyConfirmSignUpElement>;
+            "amplify-container": LocalJSX.AmplifyContainer & JSXBase.HTMLAttributes<HTMLAmplifyContainerElement>;
             "amplify-country-dial-code": LocalJSX.AmplifyCountryDialCode & JSXBase.HTMLAttributes<HTMLAmplifyCountryDialCodeElement>;
             "amplify-email-field": LocalJSX.AmplifyEmailField & JSXBase.HTMLAttributes<HTMLAmplifyEmailFieldElement>;
             "amplify-facebook-button": LocalJSX.AmplifyFacebookButton & JSXBase.HTMLAttributes<HTMLAmplifyFacebookButtonElement>;
@@ -1984,8 +2732,15 @@ declare module "@stencil/core" {
             "amplify-oauth-button": LocalJSX.AmplifyOauthButton & JSXBase.HTMLAttributes<HTMLAmplifyOauthButtonElement>;
             "amplify-password-field": LocalJSX.AmplifyPasswordField & JSXBase.HTMLAttributes<HTMLAmplifyPasswordFieldElement>;
             "amplify-phone-field": LocalJSX.AmplifyPhoneField & JSXBase.HTMLAttributes<HTMLAmplifyPhoneFieldElement>;
+            "amplify-photo-picker": LocalJSX.AmplifyPhotoPicker & JSXBase.HTMLAttributes<HTMLAmplifyPhotoPickerElement>;
+            "amplify-picker": LocalJSX.AmplifyPicker & JSXBase.HTMLAttributes<HTMLAmplifyPickerElement>;
             "amplify-radio-button": LocalJSX.AmplifyRadioButton & JSXBase.HTMLAttributes<HTMLAmplifyRadioButtonElement>;
             "amplify-require-new-password": LocalJSX.AmplifyRequireNewPassword & JSXBase.HTMLAttributes<HTMLAmplifyRequireNewPasswordElement>;
+            "amplify-s3-album": LocalJSX.AmplifyS3Album & JSXBase.HTMLAttributes<HTMLAmplifyS3AlbumElement>;
+            "amplify-s3-image": LocalJSX.AmplifyS3Image & JSXBase.HTMLAttributes<HTMLAmplifyS3ImageElement>;
+            "amplify-s3-image-picker": LocalJSX.AmplifyS3ImagePicker & JSXBase.HTMLAttributes<HTMLAmplifyS3ImagePickerElement>;
+            "amplify-s3-text": LocalJSX.AmplifyS3Text & JSXBase.HTMLAttributes<HTMLAmplifyS3TextElement>;
+            "amplify-s3-text-picker": LocalJSX.AmplifyS3TextPicker & JSXBase.HTMLAttributes<HTMLAmplifyS3TextPickerElement>;
             "amplify-section": LocalJSX.AmplifySection & JSXBase.HTMLAttributes<HTMLAmplifySectionElement>;
             "amplify-select": LocalJSX.AmplifySelect & JSXBase.HTMLAttributes<HTMLAmplifySelectElement>;
             "amplify-select-mfa-type": LocalJSX.AmplifySelectMfaType & JSXBase.HTMLAttributes<HTMLAmplifySelectMfaTypeElement>;
