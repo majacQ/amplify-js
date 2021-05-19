@@ -35,14 +35,14 @@
   "homepage": "https://aws-amplify.github.io/",
   "dependencies": {
     "@aws-amplify/analytics": "4.0.12",
-    "@aws-amplify/api": "3.2.24",
-    "@aws-amplify/auth": "3.4.24",
+    "@aws-amplify/api": "3.3.2",
+    "@aws-amplify/auth": "3.4.33",
     "@aws-amplify/cache": "3.1.49",
     "@aws-amplify/core": "3.8.16",
-    "@aws-amplify/datastore": "2.9.10",
+    "@aws-amplify/datastore": "2.10.1",
     "@aws-amplify/interactions": "3.3.24",
     "@aws-amplify/predictions": "3.2.24",
-    "@aws-amplify/pubsub": "3.2.22",
+    "@aws-amplify/pubsub": "3.3.2",
     "@aws-amplify/storage": "3.3.24",
     "@aws-amplify/ui": "2.0.2",
     "@aws-amplify/xr": "2.2.24"

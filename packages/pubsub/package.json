@@ -45,7 +45,7 @@
     "cpx": "^1.5.0"
   },
   "dependencies": {
-    "@aws-amplify/auth": "3.4.24",
+    "@aws-amplify/auth": "3.4.33",
     "@aws-amplify/cache": "3.1.49",
     "@aws-amplify/core": "3.8.16",
     "graphql": "14.0.0",
