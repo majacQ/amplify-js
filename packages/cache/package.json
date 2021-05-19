@@ -44,7 +44,7 @@
   },
   "homepage": "https://aws-amplify.github.io/",
   "dependencies": {
-    "@aws-amplify/core": "3.8.16"
+    "@aws-amplify/core": "3.8.21"
   },
   "jest": {
     "globals": {
