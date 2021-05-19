@@ -32,22 +32,22 @@
   "homepage": "https://github.com/aws/aws-amplify#readme",
   "devDependencies": {
     "@types/jest": "^20.0.7",
-    "@types/node": "^8.9.5",
+    "@types/node": "^8.10.66",
     "codecov": "^1.0.1",
-    "jest": "^22.4.3",
+    "jest": "^22.4.4",
     "json-loader": "^0.5.7",
-    "lerna": "^2.4.0",
+    "lerna": "^2.11.0",
     "pre-commit": "^1.2.2",
-    "rimraf": "^2.6.2",
-    "source-map-loader": "^0.2.1",
-    "ts-jest": "^22.0.0",
-    "tslint": "^5.7.0",
-    "tslint-config-airbnb": "^5.8.0",
+    "rimraf": "^2.7.1",
+    "source-map-loader": "^0.2.4",
+    "ts-jest": "^22.4.6",
+    "tslint": "^5.20.1",
+    "tslint-config-airbnb": "^5.11.2",
     "typedoc": "^0.9.0",
     "typescript": "2.6.2",
     "typescript-formatter": "^6.0.0",
     "uglifyjs-webpack-plugin": "^0.4.6",
-    "webpack": "^3.5.5"
+    "webpack": "^3.12.0"
   },
   "jest": {
     "transform": {
