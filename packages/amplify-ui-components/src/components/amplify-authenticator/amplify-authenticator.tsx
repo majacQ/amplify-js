@@ -1,21 +1,41 @@
 import { Component, State, Prop, h, Host } from '@stencil/core';
-import { AuthState, CognitoUserInterface, FederatedConfig, UsernameAliasStrings } from '../../common/types/auth-types';
+import {
+  AuthState,
+  CognitoUserInterface,
+  FederatedConfig,
+  UsernameAliasStrings,
+  AuthStateHandler,
+} from '../../common/types/auth-types';
 import {
   AUTH_CHANNEL,
   NO_AUTH_MODULE_FOUND,
-  SIGNING_IN_WITH_HOSTEDUI_KEY,
+  REDIRECTED_FROM_HOSTED_UI,
   AUTHENTICATOR_AUTHSTATE,
   UI_AUTH_CHANNEL,
   TOAST_AUTH_ERROR_EVENT,
-  AUTH_STATE_CHANGE_EVENT,
 } from '../../common/constants';
 import { Auth, appendToCognitoUserAgent } from '@aws-amplify/auth';
 import { Hub, Logger } from '@aws-amplify/core';
+import { dispatchAuthStateChangeEvent, onAuthUIStateChange } from '../../common/helpers';
+import { checkContact } from '../../common/auth-helpers';
 
 const logger = new Logger('Authenticator');
 
+/**
+ * @slot sign-in - Content placed inside of the sign in workflow for when a user wants to sign into their account
+ * @slot confirm-sign-in - Content placed inside of the confirm sign in workflow for when a user needs to confirm the account they signed in with
+ * @slot sign-up - Content placed inside of the sign up workflow for when a user wants to register a new account
+ * @slot confirm-sign-up - Content placed inside of the confirm sign up workflow for when a user needs to confirm the account they signed up with
+ * @slot forgot-password - Content placed inside of the forgot password workflow for when a user wants to reset their password
+ * @slot require-new-password - Content placed inside of the require new password workflow for when a user is required to update their password
+ * @slot verify-contact - Content placed inside of the verify-contact workflow for when a user must verify their contact information
+ * @slot totp-setup - Content placed inside of the totp-setup workflow for when a user opts to use TOTP MFA
+ * @slot greetings - Content placed inside of the greetings navigation for when a user is signed in
+ * @slot loading - Content placed inside of the loading workflow for when the app is loading
+ */
 @Component({
   tag: 'amplify-authenticator',
+  styleUrl: 'amplify-authenticator.scss',
   shadow: true,
 })
 export class AmplifyAuthenticator {
@@ -25,56 +45,57 @@ export class AmplifyAuthenticator {
   @Prop() federated: FederatedConfig;
   /** Username Alias is used to setup authentication with `username`, `email` or `phone_number`  */
   @Prop() usernameAlias: UsernameAliasStrings;
+  /** Callback for Authenticator state machine changes */
+  @Prop() handleAuthStateChange: AuthStateHandler = () => {};
 
   @State() authState: AuthState = AuthState.Loading;
   @State() authData: CognitoUserInterface;
   @State() toastMessage: string = '';
 
+  private handleExternalAuthEvent = ({ payload }) => {
+    switch (payload.event) {
+      case 'cognitoHostedUI':
+      case 'signIn':
+        checkContact(payload.data, dispatchAuthStateChangeEvent);
+        break;
+      case 'cognitoHostedUI_failure':
+      case 'parsingUrl_failure':
+      case 'signOut':
+      case 'customGreetingSignOut':
+        return dispatchAuthStateChangeEvent(this.initialAuthState);
+    }
+  };
+
+  private handleToastEvent = ({ payload }) => {
+    switch (payload.event) {
+      case TOAST_AUTH_ERROR_EVENT:
+        if (payload.message) this.toastMessage = payload.message;
+        break;
+    }
+  };
+
   async componentWillLoad() {
-    Hub.listen(AUTH_CHANNEL, ({ payload: { event, data } }) => {
-      switch (event) {
-        case 'cognitoHostedUI':
-          return this.onAuthStateChange(AuthState.SignedIn, data);
-
-        case 'cognitoHostedUI_failure':
-        case 'parsingUrl_failure':
-        case 'signOut':
-        case 'customGreetingSignOut':
-          return this.onAuthStateChange(AuthState.SignIn, null);
-      }
+    onAuthUIStateChange((authState, authData) => {
+      this.onAuthStateChange(authState, authData as CognitoUserInterface);
+      this.toastMessage = '';
     });
-
-    Hub.listen(UI_AUTH_CHANNEL, data => {
-      const { payload } = data;
-      switch (payload.event) {
-        case TOAST_AUTH_ERROR_EVENT:
-          if (payload.message) this.toastMessage = payload.message;
-          break;
-        case AUTH_STATE_CHANGE_EVENT:
-          if (payload.message) {
-            this.onAuthStateChange(payload.message as AuthState, payload.data);
-            this.toastMessage = '';
-          }
-          break;
-        default:
-          logger.warn('Unhandled Auth Event', payload.event);
-      }
-    });
+    Hub.listen(UI_AUTH_CHANNEL, this.handleToastEvent);
+    Hub.listen(AUTH_CHANNEL, this.handleExternalAuthEvent);
 
     appendToCognitoUserAgent('amplify-authenticator');
-    const byHostedUI = localStorage.getItem(SIGNING_IN_WITH_HOSTEDUI_KEY);
-    localStorage.removeItem(SIGNING_IN_WITH_HOSTEDUI_KEY);
+    const byHostedUI = localStorage.getItem(REDIRECTED_FROM_HOSTED_UI);
+    localStorage.removeItem(REDIRECTED_FROM_HOSTED_UI);
     if (byHostedUI !== 'true') await this.checkUser();
   }
 
-  async checkUser() {
+  private async checkUser() {
     if (!Auth || typeof Auth.currentAuthenticatedUser !== 'function') {
       throw new Error(NO_AUTH_MODULE_FOUND);
     }
 
     try {
       const user = await Auth.currentAuthenticatedUser();
-      this.onAuthStateChange(AuthState.SignedIn, user);
+      dispatchAuthStateChangeEvent(AuthState.SignedIn, user);
     } catch (error) {
       let cachedAuthState = null;
       try {
@@ -86,31 +107,34 @@ export class AmplifyAuthenticator {
         if (cachedAuthState === AuthState.SignedIn) {
           await Auth.signOut();
         }
-        this.onAuthStateChange(this.initialAuthState);
+        dispatchAuthStateChangeEvent(this.initialAuthState);
       } catch (error) {
         logger.debug('Failed to sign out', error);
       }
     }
   }
 
-  onAuthStateChange = (nextAuthState: AuthState, data?: CognitoUserInterface) => {
-    if (nextAuthState === undefined) return logger.info('nextAuthState cannot be undefined');
+  private async onAuthStateChange(nextAuthState: AuthState, data?: CognitoUserInterface) {
+    if (nextAuthState === undefined) return logger.error('nextAuthState cannot be undefined');
 
     logger.info('Inside onAuthStateChange Method current authState:', this.authState);
+
     if (nextAuthState === AuthState.SignedOut) {
       this.authState = this.initialAuthState;
     } else {
       this.authState = nextAuthState;
     }
 
-    if (data !== undefined) {
-      this.authData = data;
-      logger.log('Auth Data was set:', this.authData);
-    }
-    logger.info(`authState has been updated to ${this.authState}`);
-  };
+    this.authData = data;
+    if (this.authData) logger.log('Auth Data was set:', this.authData);
 
-  renderAuthComponent(authState: AuthState) {
+    if (this.authState === nextAuthState) {
+      this.handleAuthStateChange(this.authState, this.authData);
+      logger.info(`authState has been updated to ${this.authState}`);
+    }
+  }
+
+  private renderAuthComponent(authState: AuthState) {
     switch (authState) {
       case AuthState.SignIn:
         return (
@@ -173,13 +197,10 @@ export class AmplifyAuthenticator {
     }
   }
 
-  async componentDidUnload() {
-    Hub.remove(UI_AUTH_CHANNEL, data => {
-      const { payload } = data;
-      if (payload.event === TOAST_AUTH_ERROR_EVENT && payload.message) {
-        this.toastMessage = payload.message;
-      }
-    });
+  componentWillUnload() {
+    Hub.remove(AUTH_CHANNEL, this.handleExternalAuthEvent);
+    Hub.remove(UI_AUTH_CHANNEL, this.handleToastEvent);
+    return onAuthUIStateChange;
   }
 
   render() {
@@ -194,7 +215,11 @@ export class AmplifyAuthenticator {
             data-test="authenticator-error"
           />
         ) : null}
-        {this.renderAuthComponent(this.authState)}
+        {this.authState === AuthState.SignedIn ? (
+          this.renderAuthComponent(this.authState)
+        ) : (
+          <div class="auth-container">{this.renderAuthComponent(this.authState)}</div>
+        )}
       </Host>
     );
   }

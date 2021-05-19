@@ -148,11 +148,16 @@ function reportWatchStatusChanged(diagnostic, newLine, options, errorCount) {
 }
 
 async function buildES5(typeScriptCompiler) {
-	const jsx = packageInfo.name === 'aws-amplify-react' ? 'react' : undefined;
+	const jsx = ['@aws-amplify/ui-react', 'aws-amplify-react'].includes(
+		packageInfo.name
+	)
+		? 'react'
+		: undefined;
 	// tsconfig for ES5 generating
 	let compilerOptions = {
+		esModuleInterop: true,
 		noImplicitAny: false,
-		lib: ['dom', 'es2017', 'esnext.asynciterable'],
+		lib: ['dom', 'es2017', 'esnext.asynciterable', 'es2018.asyncgenerator'],
 		downlevelIteration: true,
 		jsx: jsx,
 		sourceMap: true,
@@ -188,11 +193,16 @@ async function buildES5(typeScriptCompiler) {
 }
 
 function buildES6(typeScriptCompiler) {
-	const jsx = packageInfo.name === 'aws-amplify-react' ? 'react' : undefined;
+	const jsx = ['@aws-amplify/ui-react', 'aws-amplify-react'].includes(
+		packageInfo.name
+	)
+		? 'react'
+		: undefined;
 	// tsconfig for ESM generating
 	let compilerOptions = {
+		esModuleInterop: true,
 		noImplicitAny: false,
-		lib: ['dom', 'es2017', 'esnext.asynciterable'],
+		lib: ['dom', 'es2017', 'esnext.asynciterable', 'es2018.asyncgenerator'],
 		downlevelIteration: true,
 		jsx: jsx,
 		sourceMap: true,

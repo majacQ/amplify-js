@@ -1,13 +1,26 @@
-import Observable from 'zen-observable-ts';
+import { browserOrNode, isWebWorker } from '@aws-amplify/core';
+import Observable, { ZenObservable } from 'zen-observable-ts';
 
 type NetworkStatus = {
 	online: boolean;
 };
 
 export default class ReachabilityNavigator implements Reachability {
-	networkMonitor(): Observable<NetworkStatus> {
+	private static _observers: Array<
+		ZenObservable.SubscriptionObserver<NetworkStatus>
+	> = [];
+
+	networkMonitor(netInfo?: any): Observable<NetworkStatus> {
+		if (browserOrNode().isNode) {
+			return Observable.from([{ online: true }]);
+		}
+
 		return new Observable(observer => {
-			observer.next({ online: window.navigator.onLine });
+			const online = isWebWorker()
+				? self.navigator.onLine
+				: window.navigator.onLine;
+
+			observer.next({ online });
 
 			const notifyOnline = () => observer.next({ online: true });
 			const notifyOffline = () => observer.next({ online: false });
@@ -15,14 +28,33 @@ export default class ReachabilityNavigator implements Reachability {
 			window.addEventListener('online', notifyOnline);
 			window.addEventListener('offline', notifyOffline);
 
+			ReachabilityNavigator._observers.push(observer);
+
 			return () => {
 				window.removeEventListener('online', notifyOnline);
 				window.removeEventListener('offline', notifyOffline);
+
+				ReachabilityNavigator._observers = ReachabilityNavigator._observers.filter(
+					_observer => _observer !== observer
+				);
 			};
 		});
+	}
+
+	// expose observers to simulate offline mode for integration testing
+	private static _observerOverride(status: NetworkStatus): void {
+		for (const observer of ReachabilityNavigator._observers) {
+			if (observer.closed) {
+				ReachabilityNavigator._observers = ReachabilityNavigator._observers.filter(
+					_observer => _observer !== observer
+				);
+				continue;
+			}
+			observer.next(status);
+		}
 	}
 }
 
 interface Reachability {
-	networkMonitor(): Observable<NetworkStatus>;
+	networkMonitor(netInfo?: any): Observable<NetworkStatus>;
 }

@@ -14,7 +14,7 @@ export class AmplifyFederatedButtons {
   @Prop() authState: AuthState = AuthState.SignIn;
   /** Federated credentials & configuration. */
   @Prop() federated: FederatedConfig = {};
-  /** Passed from the Authenticator component in order to change Authentication state
+  /** Auth state change handler for this component
    * e.g. SignIn -> 'Create Account' link -> SignUp
    */
   @Prop() handleAuthStateChange: AuthStateHandler = dispatchAuthStateChangeEvent;
@@ -24,7 +24,7 @@ export class AmplifyFederatedButtons {
       throw new Error(NO_AUTH_MODULE_FOUND);
     }
 
-    const { oauth = {} } = Auth.configure({});
+    const { oauth = {} } = Auth.configure();
 
     // backward compatibility
     if (oauth['domain']) {

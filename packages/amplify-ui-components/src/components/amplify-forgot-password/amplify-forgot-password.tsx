@@ -1,23 +1,24 @@
 import { Auth } from '@aws-amplify/auth';
 import { I18n, Logger } from '@aws-amplify/core';
-import { Component, Prop, State, h } from '@stencil/core';
+import { Component, Prop, State, h, Watch, Host } from '@stencil/core';
 
-import { FormFieldTypes, PhoneNumberInterface } from '../amplify-auth-fields/amplify-auth-fields-interface';
-import { AuthState, AuthStateHandler, UsernameAliasStrings } from '../../common/types/auth-types';
 import {
-  NO_AUTH_MODULE_FOUND,
-  COUNTRY_DIAL_CODE_DEFAULT,
-  PHONE_SUFFIX,
-  COUNTRY_DIAL_CODE_SUFFIX,
-} from '../../common/constants';
+  FormFieldTypes,
+  FormFieldType,
+  PhoneNumberInterface,
+  PhoneFormFieldType,
+} from '../amplify-auth-fields/amplify-auth-fields-interface';
+import { AuthState, AuthStateHandler, UsernameAliasStrings } from '../../common/types/auth-types';
+import { NO_AUTH_MODULE_FOUND, COUNTRY_DIAL_CODE_DEFAULT } from '../../common/constants';
 import { Translations } from '../../common/Translations';
-import { CodeDeliveryType } from './amplify-forgot-password-interface';
+import { CodeDeliveryType, ForgotPasswordAttributes } from './amplify-forgot-password-interface';
 
 import {
   dispatchToastHubEvent,
   dispatchAuthStateChangeEvent,
   composePhoneNumberInput,
   checkUsernameAlias,
+  handlePhoneNumberChange,
 } from '../../common/helpers';
 
 const logger = new Logger('ForgotPassword');
@@ -28,40 +29,66 @@ const logger = new Logger('ForgotPassword');
 })
 export class AmplifyForgotPassword {
   /** The header text of the forgot password section */
-  @Prop() headerText: string = I18n.get(Translations.RESET_YOUR_PASSWORD);
+  @Prop() headerText: string = Translations.RESET_YOUR_PASSWORD;
+  /** The text displayed inside of the send code button for the form */
+  @Prop() sendButtonText: string = Translations.SEND_CODE;
   /** The text displayed inside of the submit button for the form */
-  @Prop() submitButtonText: string = I18n.get(Translations.SEND_CODE);
+  @Prop() submitButtonText: string = Translations.SUBMIT;
   /** The form fields displayed inside of the forgot password form */
-  @Prop() formFields: FormFieldTypes;
+  @Prop() formFields: FormFieldTypes | string[] = [];
   /** The function called when making a request to reset password */
   @Prop() handleSend: (event: Event) => void = event => this.send(event);
   /** The function called when submitting a new password */
   @Prop() handleSubmit: (event: Event) => void = event => this.submit(event);
-  /** Passed from the Authenticator component in order to change Authentication state */
+  /** Auth state change handler for this component */
   @Prop() handleAuthStateChange: AuthStateHandler = dispatchAuthStateChangeEvent;
   /** Username Alias is used to setup authentication with `username`, `email` or `phone_number`  */
   @Prop() usernameAlias: UsernameAliasStrings = 'username';
-
-  @State() username: string;
-  @State() password: string;
-  @State() code: string;
   @State() delivery: CodeDeliveryType | null = null;
   @State() loading: boolean = false;
-  @State() email: string;
-  @State() phoneNumber: PhoneNumberInterface = {
+
+  private phoneNumber: PhoneNumberInterface = {
     countryDialCodeValue: COUNTRY_DIAL_CODE_DEFAULT,
     phoneNumberValue: null,
+  };
+  private newFormFields: FormFieldTypes | string[] = [];
+
+  @State() forgotPasswordAttrs: ForgotPasswordAttributes = {
+    userInput: '',
+    password: '',
+    code: '',
   };
 
   componentWillLoad() {
     checkUsernameAlias(this.usernameAlias);
+    this.buildFormFields();
+  }
+
+  @Watch('formFields')
+  formFieldsHandler() {
+    this.buildFormFields();
+  }
+
+  private buildFormFields() {
+    if (this.formFields.length === 0) {
+      this.buildDefaultFormFields();
+    } else {
+      this.formFields.forEach(field => {
+        const newField = { ...field };
+        newField['handleInputChange'] = event => this.handleFormFieldInputWithCallback(event, field);
+        this.newFormFields.push(newField);
+      });
+    }
+  }
+
+  private buildDefaultFormFields() {
     switch (this.usernameAlias) {
       case 'email':
-        this.formFields = [
+        this.newFormFields = [
           {
             type: 'email',
             required: true,
-            handleInputChange: event => this.handleEmailChange(event),
+            handleInputChange: this.handleFormFieldInputChange('email'),
             inputProps: {
               'data-test': 'forgot-password-email-input',
             },
@@ -69,11 +96,11 @@ export class AmplifyForgotPassword {
         ];
         break;
       case 'phone_number':
-        this.formFields = [
+        this.newFormFields = [
           {
             type: 'phone_number',
             required: true,
-            handleInputChange: event => this.handlePhoneNumberChange(event),
+            handleInputChange: this.handleFormFieldInputChange('phone_number'),
             inputProps: {
               'data-test': 'forgot-password-phone-number-input',
             },
@@ -82,12 +109,11 @@ export class AmplifyForgotPassword {
         break;
       case 'username':
       default:
-        this.formFields = [
+        this.newFormFields = [
           {
             type: 'username',
             required: true,
-            handleInputChange: event => this.handleUsernameChange(event),
-            value: this.username,
+            handleInputChange: this.handleFormFieldInputChange('username'),
             inputProps: {
               'data-test': 'forgot-password-username-input',
             },
@@ -97,41 +123,59 @@ export class AmplifyForgotPassword {
     }
   }
 
-  handleUsernameChange(event) {
-    this.username = event.target.value;
-  }
-
-  handleEmailChange(event) {
-    this.email = event.target.value;
-  }
-
-  handlePhoneNumberChange(event) {
-    const name = event.target.name;
-    const value = event.target.value;
-
-    /** Cognito expects to have a string be passed when signing up. Since the Select input is separate
-     * input from the phone number input, we need to first capture both components values and combined
-     * them together.
-     */
-
-    if (name === COUNTRY_DIAL_CODE_SUFFIX) {
-      this.phoneNumber.countryDialCodeValue = value;
-    }
-
-    if (name === PHONE_SUFFIX) {
-      this.phoneNumber.phoneNumberValue = value;
+  private handleFormFieldInputChange(fieldType) {
+    switch (fieldType) {
+      case 'username':
+      case 'email':
+        return event => (this.forgotPasswordAttrs.userInput = event.target.value);
+      case 'phone_number':
+        return event => handlePhoneNumberChange(event, this.phoneNumber);
+      case 'password':
+      case 'code':
+        return event => (this.forgotPasswordAttrs[fieldType] = event.target.value);
+      default:
+        return;
     }
   }
 
-  handlePasswordChange(event) {
-    this.password = event.target.value;
+  setFieldValue(field: PhoneFormFieldType | FormFieldType, formAttributes: ForgotPasswordAttributes) {
+    switch (field.type) {
+      case 'username':
+      case 'email':
+        if (field.value === undefined) {
+          formAttributes.userInput = '';
+        } else {
+          formAttributes.userInput = field.value;
+        }
+        break;
+      case 'phone_number':
+        if ((field as PhoneFormFieldType).dialCode) {
+          this.phoneNumber.countryDialCodeValue = (field as PhoneFormFieldType).dialCode;
+        }
+        this.phoneNumber.phoneNumberValue = field.value;
+        break;
+      case 'password':
+      case 'code':
+        if (field.value === undefined) {
+          formAttributes[field.type] = '';
+        } else {
+          formAttributes[field.type] = field.value;
+        }
+        break;
+    }
   }
 
-  handleCodeChange(event) {
-    this.code = event.target.value;
+  private handleFormFieldInputWithCallback(event, field) {
+    const fnToCall = field['handleInputChange']
+      ? field['handleInputChange']
+      : (event, cb) => {
+          cb(event);
+        };
+    const callback = this.handleFormFieldInputChange(field.type);
+    fnToCall(event, callback.bind(this));
   }
 
-  async send(event) {
+  private async send(event) {
     if (event) {
       event.preventDefault();
     }
@@ -141,26 +185,25 @@ export class AmplifyForgotPassword {
     this.loading = true;
 
     switch (this.usernameAlias) {
-      case 'email':
-        this.username = this.email;
-        break;
       case 'phone_number':
-        this.username = composePhoneNumberInput(this.phoneNumber);
+        try {
+          this.forgotPasswordAttrs.userInput = composePhoneNumberInput(this.phoneNumber);
+        } catch (error) {
+          dispatchToastHubEvent(error);
+        }
         break;
-      case 'username':
       default:
         break;
     }
 
     try {
-      const data = await Auth.forgotPassword(this.username);
+      const data = await Auth.forgotPassword(this.forgotPasswordAttrs.userInput);
       logger.debug(data);
-      this.formFields = [
+      this.newFormFields = [
         {
           type: 'code',
           required: true,
-          handleInputChange: event => this.handleCodeChange(event),
-          value: this.code,
+          handleInputChange: this.handleFormFieldInputChange('code'),
           inputProps: {
             'data-test': 'forgot-password-code-input',
           },
@@ -168,10 +211,9 @@ export class AmplifyForgotPassword {
         {
           type: 'password',
           required: true,
-          handleInputChange: event => this.handlePasswordChange(event),
-          label: 'New password',
-          placeholder: 'Enter your new password',
-          value: this.password,
+          handleInputChange: this.handleFormFieldInputChange('password'),
+          label: I18n.get(Translations.NEW_PASSWORD_LABEL),
+          placeholder: I18n.get(Translations.NEW_PASSWORD_PLACEHOLDER),
         },
       ];
       this.delivery = data.CodeDeliveryDetails;
@@ -182,7 +224,7 @@ export class AmplifyForgotPassword {
     }
   }
 
-  async submit(event: Event) {
+  private async submit(event: Event) {
     if (event) {
       event.preventDefault();
     }
@@ -191,7 +233,8 @@ export class AmplifyForgotPassword {
     }
     this.loading = true;
     try {
-      const data = await Auth.forgotPasswordSubmit(this.username, this.code, this.password);
+      const { userInput, code, password } = this.forgotPasswordAttrs;
+      const data = await Auth.forgotPasswordSubmit(userInput, code, password);
       logger.debug(data);
       this.handleAuthStateChange(AuthState.SignIn);
       this.delivery = null;
@@ -204,24 +247,28 @@ export class AmplifyForgotPassword {
 
   render() {
     const submitFn = this.delivery ? event => this.handleSubmit(event) : event => this.handleSend(event);
+    const submitButtonText = this.delivery ? this.submitButtonText : this.sendButtonText;
     return (
-      <amplify-form-section
-        headerText={this.headerText}
-        handleSubmit={submitFn}
-        loading={this.loading}
-        secondaryFooterContent={
-          <amplify-button
-            variant="anchor"
-            onClick={() => this.handleAuthStateChange(AuthState.SignIn)}
-            data-test="forgot-password-back-to-sign-in-link"
-          >
-            {I18n.get(Translations.BACK_TO_SIGN_IN)}
-          </amplify-button>
-        }
-        testDataPrefix={'forgot-password'}
-      >
-        <amplify-auth-fields formFields={this.formFields} />
-      </amplify-form-section>
+      <Host>
+        <amplify-form-section
+          headerText={I18n.get(this.headerText)}
+          handleSubmit={submitFn}
+          loading={this.loading}
+          secondaryFooterContent={
+            <amplify-button
+              variant="anchor"
+              onClick={() => this.handleAuthStateChange(AuthState.SignIn)}
+              data-test="forgot-password-back-to-sign-in-link"
+            >
+              {I18n.get(Translations.BACK_TO_SIGN_IN)}
+            </amplify-button>
+          }
+          testDataPrefix={'forgot-password'}
+          submitButtonText={I18n.get(submitButtonText)}
+        >
+          <amplify-auth-fields formFields={this.newFormFields} />
+        </amplify-form-section>
+      </Host>
     );
   }
 }

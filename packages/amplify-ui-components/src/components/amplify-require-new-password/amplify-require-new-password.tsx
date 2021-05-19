@@ -1,5 +1,5 @@
 import { I18n } from '@aws-amplify/core';
-import { Component, Prop, State, h } from '@stencil/core';
+import { Component, Prop, State, h, Host } from '@stencil/core';
 import { FormFieldTypes } from '../amplify-auth-fields/amplify-auth-fields-interface';
 import {
   AuthState,
@@ -12,8 +12,9 @@ import { NO_AUTH_MODULE_FOUND } from '../../common/constants';
 import { Translations } from '../../common/Translations';
 
 import { Auth } from '@aws-amplify/auth';
-import { ConsoleLogger as Logger, isEmpty } from '@aws-amplify/core';
-import { dispatchToastHubEvent, dispatchAuthStateChangeEvent } from '../../common/helpers';
+import { ConsoleLogger as Logger } from '@aws-amplify/core';
+import { dispatchToastHubEvent, dispatchAuthStateChangeEvent, requiredAttributesMap } from '../../common/helpers';
+import { checkContact } from '../../common/auth-helpers';
 
 const logger = new Logger('amplify-require-new-password');
 
@@ -23,12 +24,12 @@ const logger = new Logger('amplify-require-new-password');
 })
 export class AmplifyRequireNewPassword {
   /** The header text of the forgot password section */
-  @Prop() headerText: string = I18n.get(Translations.CHANGE_PASSWORD);
+  @Prop() headerText: string = Translations.CHANGE_PASSWORD;
   /** The text displayed inside of the submit button for the form */
-  @Prop() submitButtonText: string = I18n.get(Translations.CHANGE_PASSWORD_ACTION);
+  @Prop() submitButtonText: string = Translations.CHANGE_PASSWORD_ACTION;
   /** The function called when submitting a new password */
   @Prop() handleSubmit: (event: Event) => void = event => this.completeNewPassword(event);
-  /** Passed from the Authenticator component in order to change Authentication state */
+  /** Auth state change handler for this component */
   @Prop() handleAuthStateChange: AuthStateHandler = dispatchAuthStateChangeEvent;
   /** Used for the username to be passed to resend code */
   @Prop() user: CognitoUserInterface;
@@ -40,34 +41,57 @@ export class AmplifyRequireNewPassword {
       handleInputChange: event => this.handlePasswordChange(event),
       label: I18n.get(Translations.NEW_PASSWORD_LABEL),
       placeholder: I18n.get(Translations.NEW_PASSWORD_PLACEHOLDER),
+      inputProps: {
+        'data-test': 'require-new-password-password-input',
+      },
     },
   ];
 
+  @State() currentUser: CognitoUserInterface = this.user;
   @State() password: string;
   @State() loading: boolean = false;
+  private requiredAttributes: object = {};
 
-  handlePasswordChange(event) {
+  private newFormFields: FormFieldTypes = this.formFields;
+
+  private handleRequiredAttributeInputChange(attribute, event) {
+    this.requiredAttributes[attribute] = event.target.value;
+  }
+
+  async componentWillLoad() {
+    if (!this.user) {
+      // Check for authenticated user
+      try {
+        const user = await Auth.currentAuthenticatedUser();
+        if (user) this.currentUser = user;
+      } catch (error) {
+        dispatchToastHubEvent(error);
+      }
+    }
+    if (this.currentUser && this.currentUser.challengeParam.requiredAttributes) {
+      const userRequiredAttributes = this.currentUser.challengeParam.requiredAttributes;
+
+      userRequiredAttributes.forEach(attribute => {
+        const formField = {
+          type: attribute,
+          required: true,
+          label: requiredAttributesMap[attribute].label,
+          placeholder: requiredAttributesMap[attribute].placeholder,
+          handleInputChange: event => this.handleRequiredAttributeInputChange(attribute, event),
+          inputProps: {
+            'data-test': `require-new-password-${attribute}-input`,
+          },
+        };
+        this.newFormFields.push(formField);
+      });
+    }
+  }
+
+  private handlePasswordChange(event) {
     this.password = event.target.value;
   }
 
-  async checkContact(user) {
-    if (!Auth || typeof Auth.verifiedContact !== 'function') {
-      throw new Error(NO_AUTH_MODULE_FOUND);
-    }
-    try {
-      const data = await Auth.verifiedContact(user);
-      if (!isEmpty(data.verified)) {
-        this.handleAuthStateChange(AuthState.SignedIn, user);
-      } else {
-        user = Object.assign(user, data);
-        this.handleAuthStateChange(AuthState.VerifyContact, user);
-      }
-    } catch (error) {
-      dispatchToastHubEvent(error);
-    }
-  }
-
-  async completeNewPassword(event: Event) {
+  private async completeNewPassword(event: Event) {
     if (event) {
       event.preventDefault();
     }
@@ -78,9 +102,7 @@ export class AmplifyRequireNewPassword {
 
     this.loading = true;
     try {
-      const { requiredAttributes } = this.user.challengeParam;
-      const user = await Auth.completeNewPassword(this.user, this.password, requiredAttributes);
-      user.challengeParameter;
+      const user = await Auth.completeNewPassword(this.currentUser, this.password, this.requiredAttributes);
 
       logger.debug('complete new password', user);
       switch (user.challengeName) {
@@ -92,7 +114,7 @@ export class AmplifyRequireNewPassword {
           this.handleAuthStateChange(AuthState.TOTPSetup, user);
           break;
         default:
-          this.checkContact(user);
+          await checkContact(user, this.handleAuthStateChange);
       }
     } catch (error) {
       dispatchToastHubEvent(error);
@@ -103,21 +125,21 @@ export class AmplifyRequireNewPassword {
 
   render() {
     return (
-      <amplify-form-section
-        headerText={this.headerText}
-        handleSubmit={this.handleSubmit}
-        loading={this.loading}
-        secondaryFooterContent={
-          <amplify-button
-            variant="anchor"
-            onClick={() => this.handleAuthStateChange(AuthState.SignIn)}
-          >
-            {I18n.get(Translations.BACK_TO_SIGN_IN)}
-          </amplify-button>
-        }
-      >
-        <amplify-auth-fields formFields={this.formFields} />
-      </amplify-form-section>
+      <Host>
+        <amplify-form-section
+          headerText={I18n.get(this.headerText)}
+          handleSubmit={this.handleSubmit}
+          loading={this.loading}
+          secondaryFooterContent={
+            <amplify-button variant="anchor" onClick={() => this.handleAuthStateChange(AuthState.SignIn)}>
+              {I18n.get(Translations.BACK_TO_SIGN_IN)}
+            </amplify-button>
+          }
+          submitButtonText={I18n.get(this.submitButtonText)}
+        >
+          <amplify-auth-fields formFields={this.newFormFields} />
+        </amplify-form-section>
+      </Host>
     );
   }
 }

@@ -25,6 +25,7 @@ import {
 	isCognitoHostedOpts,
 	isFederatedSignInOptions,
 	isFederatedSignInOptionsCustom,
+	hasCustomState,
 	FederatedSignInOptionsCustom,
 	LegacyProvider,
 	FederatedSignInOptions,
@@ -35,13 +36,14 @@ import {
 import {
 	Amplify,
 	ConsoleLogger as Logger,
-	Hub,
 	Credentials,
+	Hub,
 	StorageHelper,
 	ICredentials,
 	Parser,
 	JS,
-	Platform,
+	UniversalStorage,
+	urlSafeDecode,
 } from '@aws-amplify/core';
 import {
 	CookieStorage,
@@ -65,26 +67,22 @@ import { parse } from 'url';
 import OAuth from './OAuth/OAuth';
 import { default as urlListener } from './urlListener';
 import { AuthError, NoUserPoolError } from './Errors';
-import { AuthErrorTypes } from './types/Auth';
+import { AuthErrorTypes, CognitoHostedUIIdentityProvider } from './types/Auth';
 
 const logger = new Logger('AuthClass');
 const USER_ADMIN_SCOPE = 'aws.cognito.signin.user.admin';
 
+// 10 sec, following this guide https://www.nngroup.com/articles/response-times-3-important-limits/
+const OAUTH_FLOW_MS_TIMEOUT = 10 * 1000;
+
 const AMPLIFY_SYMBOL = (typeof Symbol !== 'undefined' &&
-	typeof Symbol.for === 'function'
+typeof Symbol.for === 'function'
 	? Symbol.for('amplify_default')
 	: '@@amplify_default') as Symbol;
 
 const dispatchAuthEvent = (event: string, data: any, message: string) => {
 	Hub.dispatch('auth', { event, data, message }, 'Auth', AMPLIFY_SYMBOL);
 };
-
-export enum CognitoHostedUIIdentityProvider {
-	Cognito = 'COGNITO',
-	Google = 'Google',
-	Facebook = 'Facebook',
-	Amazon = 'LoginWithAmazon',
-}
 
 /**
  * Provide authentication steps
@@ -96,6 +94,9 @@ export class AuthClass {
 	private _oAuthHandler: OAuth;
 	private _storage;
 	private _storageSync;
+	private oAuthFlowInProgress: boolean = false;
+
+	Credentials = Credentials;
 
 	/**
 	 * Initialize Auth with AWS configurations
@@ -103,6 +104,7 @@ export class AuthClass {
 	 */
 	constructor(config: AuthOptions) {
 		this.configure(config);
+		this.currentCredentials = this.currentCredentials.bind(this);
 		this.currentUserCredentials = this.currentUserCredentials.bind(this);
 
 		Hub.listen('auth', ({ payload }) => {
@@ -119,14 +121,13 @@ export class AuthClass {
 					break;
 			}
 		});
-		Amplify.register(this);
 	}
 
 	public getModuleName() {
 		return 'Auth';
 	}
 
-	configure(config) {
+	configure(config?) {
 		if (!config) return this._config || {};
 		logger.debug('configure Auth');
 		const conf = Object.assign(
@@ -147,13 +148,16 @@ export class AuthClass {
 			refreshHandlers,
 			identityPoolRegion,
 			clientMetadata,
+			endpoint,
 		} = this._config;
 
 		if (!this._config.storage) {
 			// backward compatability
 			if (cookieStorage) this._storage = new CookieStorage(cookieStorage);
 			else {
-				this._storage = new StorageHelper().getStorage();
+				this._storage = config.ssr
+					? new UniversalStorage()
+					: new StorageHelper().getStorage();
 			}
 		} else {
 			if (!this._isValidAuthStorage(this._config.storage)) {
@@ -172,13 +176,14 @@ export class AuthClass {
 			const userPoolData: ICognitoUserPoolData = {
 				UserPoolId: userPoolId,
 				ClientId: userPoolWebClientId,
+				endpoint,
 			};
 			userPoolData.Storage = this._storage;
 
 			this.userPool = new CognitoUserPool(userPoolData);
 		}
 
-		Credentials.configure({
+		this.Credentials.configure({
 			mandatorySignIn,
 			region: identityPoolRegion || region,
 			userPoolId,
@@ -308,10 +313,6 @@ export class AuthClass {
 				validationData,
 				(err, data) => {
 					if (err) {
-						if (err.code === 'InvalidParameterException') {
-							err.message =
-								'Username could not be created. Please make sure that the username you have entered is between 1 and 128 characters.';
-						}
 						dispatchAuthEvent(
 							'signUp_failure',
 							err,
@@ -386,12 +387,12 @@ export class AuthClass {
 	 * Resend the verification code
 	 * @param {String} username - The username to be confirmed
 	 * @param {ClientMetadata} clientMetadata - Metadata to be passed to Cognito Lambda triggers
-	 * @return - A promise resolves data if success
+	 * @return - A promise resolves code delivery details if successful
 	 */
 	public resendSignUp(
 		username: string,
 		clientMetadata: ClientMetaData = this._config.clientMetadata
-	): Promise<string> {
+	): Promise<any> {
 		if (!this.userPool) {
 			return this.rejectNoUserPool();
 		}
@@ -481,8 +482,8 @@ export class AuthClass {
 				delete user['challengeName'];
 				delete user['challengeParam'];
 				try {
-					await Credentials.clear();
-					const cred = await Credentials.set(session, 'session');
+					await this.Credentials.clear();
+					const cred = await this.Credentials.set(session, 'session');
 					logger.debug('succeed to get cognito credentials', cred);
 				} catch (e) {
 					logger.debug('cannot get cognito credentials', e);
@@ -702,7 +703,9 @@ export class AuthClass {
 		user: CognitoUser | any,
 		mfaMethod: 'TOTP' | 'SMS' | 'NOMFA'
 	): Promise<string> {
-		const userData = await this._getUserData(user, { bypassCache: true });
+		const userData = await this._getUserData(user, {
+			bypassCache: true,
+		});
 		let smsMfaSettings = null;
 		let totpMfaSettings = null;
 
@@ -904,8 +907,8 @@ export class AuthClass {
 					onSuccess: async session => {
 						logger.debug(session);
 						try {
-							await Credentials.clear();
-							const cred = await Credentials.set(session, 'session');
+							await this.Credentials.clear();
+							const cred = await this.Credentials.set(session, 'session');
 							logger.debug('succeed to get cognito credentials', cred);
 						} catch (e) {
 							logger.debug('cannot get cognito credentials', e);
@@ -930,7 +933,7 @@ export class AuthClass {
 	public completeNewPassword(
 		user: CognitoUser | any,
 		password: string,
-		requiredAttributes: any,
+		requiredAttributes: any = {},
 		clientMetadata: ClientMetaData = this._config.clientMetadata
 	): Promise<CognitoUser | any> {
 		if (!password) {
@@ -946,8 +949,8 @@ export class AuthClass {
 					onSuccess: async session => {
 						logger.debug(session);
 						try {
-							await Credentials.clear();
-							const cred = await Credentials.set(session, 'session');
+							await this.Credentials.clear();
+							const cred = await this.Credentials.set(session, 'session');
 							logger.debug('succeed to get cognito credentials', cred);
 						} catch (e) {
 							logger.debug('cannot get cognito credentials', e);
@@ -973,6 +976,12 @@ export class AuthClass {
 						resolve(user);
 					},
 					mfaSetup: (challengeName, challengeParam) => {
+						logger.debug('signIn mfa setup', challengeName);
+						user['challengeName'] = challengeName;
+						user['challengeParam'] = challengeParam;
+						resolve(user);
+					},
+					totpRequired: (challengeName, challengeParam) => {
 						logger.debug('signIn mfa setup', challengeName);
 						user['challengeName'] = challengeName;
 						user['challengeParam'] = challengeParam;
@@ -1106,11 +1115,44 @@ export class AuthClass {
 		if (!this.userPool) {
 			return this.rejectNoUserPool();
 		}
-		const that = this;
+
 		return new Promise((res, rej) => {
 			this._storageSync
-				.then(() => {
-					const user = that.userPool.getCurrentUser();
+				.then(async () => {
+					if (this.isOAuthInProgress()) {
+						logger.debug('OAuth signIn in progress, waiting for resolution...');
+
+						await new Promise(res => {
+							const timeoutId = setTimeout(() => {
+								logger.debug('OAuth signIn in progress timeout');
+
+								Hub.remove('auth', hostedUISignCallback);
+
+								res();
+							}, OAUTH_FLOW_MS_TIMEOUT);
+
+							Hub.listen('auth', hostedUISignCallback);
+
+							function hostedUISignCallback({ payload }) {
+								const { event } = payload;
+
+								if (
+									event === 'cognitoHostedUI' ||
+									event === 'cognitoHostedUI_failure'
+								) {
+									logger.debug(`OAuth signIn resolved: ${event}`);
+									clearTimeout(timeoutId);
+
+									Hub.remove('auth', hostedUISignCallback);
+
+									res();
+								}
+							}
+						});
+					}
+
+					const user = this.userPool.getCurrentUser();
+
 					if (!user) {
 						logger.debug('Failed to get user from user pool');
 						rej('No current user');
@@ -1118,7 +1160,7 @@ export class AuthClass {
 					}
 
 					// refresh the session if the session expired.
-					user.getSession((err, session) => {
+					user.getSession(async (err, session) => {
 						if (err) {
 							logger.debug('Failed to get the user session', err);
 							rej(err);
@@ -1127,7 +1169,12 @@ export class AuthClass {
 
 						// get user data from Cognito
 						const bypassCache = params ? params.bypassCache : false;
-						// validate the token's scope fisrt before calling this function
+
+						if (bypassCache) {
+							await this.Credentials.clear();
+						}
+
+						// validate the token's scope first before calling this function
 						const { scope = '' } = session.getAccessToken().decodePayload();
 						if (scope.split(' ').includes(USER_ADMIN_SCOPE)) {
 							user.getUserData(
@@ -1160,7 +1207,7 @@ export class AuthClass {
 										attributeList.push(userAttribute);
 									}
 
-									const attributes = that.attributesToObject(attributeList);
+									const attributes = this.attributesToObject(attributeList);
 									Object.assign(user, { attributes, preferredMFA });
 									return res(user);
 								},
@@ -1169,7 +1216,7 @@ export class AuthClass {
 						} else {
 							logger.debug(
 								`Unable to get the user data because the ${USER_ADMIN_SCOPE} ` +
-								`is not in the scopes of the access token`
+									`is not in the scopes of the access token`
 							);
 							return res(user);
 						}
@@ -1180,6 +1227,10 @@ export class AuthClass {
 					return rej(e);
 				});
 		});
+	}
+
+	private isOAuthInProgress(): boolean {
+		return this.oAuthFlowInProgress;
 	}
 
 	/**
@@ -1200,9 +1251,15 @@ export class AuthClass {
 		}
 
 		try {
-			federatedUser = JSON.parse(
+			const federatedInfo = JSON.parse(
 				this._storage.getItem('aws-amplify-federatedInfo')
-			).user;
+			);
+			if (federatedInfo) {
+				federatedUser = {
+					...federatedInfo.user,
+					token: federatedInfo.token,
+				};
+			}
 		} catch (e) {
 			logger.debug('cannot load federated user from auth storage');
 		}
@@ -1220,7 +1277,7 @@ export class AuthClass {
 				if (e === 'No userPool') {
 					logger.error(
 						'Cannot get the current user because the user pool is missing. ' +
-						'Please make sure the Auth module is configured with a valid Cognito User Pool ID'
+							'Please make sure the Auth module is configured with a valid Cognito User Pool ID'
 					);
 				}
 				logger.debug('The user is not authenticated by the error', e);
@@ -1298,7 +1355,6 @@ export class AuthClass {
 	 * @return - A promise resolves to be current user's credentials
 	 */
 	public async currentUserCredentials(): Promise<ICredentials> {
-		const that = this;
 		logger.debug('Getting current user credentials');
 
 		try {
@@ -1320,23 +1376,23 @@ export class AuthClass {
 
 		if (federatedInfo) {
 			// refresh the jwt token here if necessary
-			return Credentials.refreshFederatedToken(federatedInfo);
+			return this.Credentials.refreshFederatedToken(federatedInfo);
 		} else {
 			return this.currentSession()
 				.then(session => {
 					logger.debug('getting session success', session);
-					return Credentials.set(session, 'session');
+					return this.Credentials.set(session, 'session');
 				})
 				.catch(error => {
 					logger.debug('getting session failed', error);
-					return Credentials.set(null, 'guest');
+					return this.Credentials.set(null, 'guest');
 				});
 		}
 	}
 
 	public currentCredentials(): Promise<ICredentials> {
-		logger.debug('getting current credntials');
-		return Credentials.get();
+		logger.debug('getting current credentials');
+		return this.Credentials.get();
 	}
 
 	/**
@@ -1445,7 +1501,7 @@ export class AuthClass {
 						onSuccess: data => {
 							logger.debug('global sign out success');
 							if (isSignedInHostedUI) {
-								return res(this._oAuthHandler.signOut());
+								this.oAuthSignOutRedirect(res, rej);
 							} else {
 								return res();
 							}
@@ -1460,12 +1516,37 @@ export class AuthClass {
 				logger.debug('user sign out', user);
 				user.signOut();
 				if (isSignedInHostedUI) {
-					return res(this._oAuthHandler.signOut());
+					this.oAuthSignOutRedirect(res, rej);
 				} else {
 					return res();
 				}
 			}
 		});
+	}
+
+	private oAuthSignOutRedirect(
+		resolve: () => void,
+		reject: (reason?: any) => void
+	) {
+		const { isBrowser } = JS.browserOrNode();
+
+		if (isBrowser) {
+			this.oAuthSignOutRedirectOrReject(reject);
+		} else {
+			this.oAuthSignOutAndResolve(resolve);
+		}
+	}
+
+	private oAuthSignOutAndResolve(resolve: () => void) {
+		this._oAuthHandler.signOut();
+		resolve();
+	}
+
+	private oAuthSignOutRedirectOrReject(reject: (reason?: any) => void) {
+		this._oAuthHandler.signOut(); // this method redirects url
+
+		// App should be redirected to another url otherwise it will reject
+		setTimeout(() => reject('Signout timeout fail'), 3000);
 	}
 
 	/**
@@ -1503,7 +1584,7 @@ export class AuthClass {
 
 	private async cleanCachedItems() {
 		// clear cognito cached item
-		await Credentials.clear();
+		await this.Credentials.clear();
 	}
 
 	/**
@@ -1649,7 +1730,7 @@ export class AuthClass {
 	 * @return {Object }- current User's information
 	 */
 	public async currentUserInfo() {
-		const source = Credentials.getCredSource();
+		const source = this.Credentials.getCredSource();
 
 		if (!source || source === 'aws' || source === 'userPool') {
 			const user = await this.currentUserPoolUser().catch(err =>
@@ -1727,6 +1808,7 @@ export class AuthClass {
 		if (
 			isFederatedSignInOptions(providerOrOptions) ||
 			isFederatedSignInOptionsCustom(providerOrOptions) ||
+			hasCustomState(providerOrOptions) ||
 			typeof providerOrOptions === 'undefined'
 		) {
 			const options = providerOrOptions || {
@@ -1769,12 +1851,12 @@ export class AuthClass {
 					logger.warn(`There is already a signed in user: ${loggedInUser} in your app.
 																	You should not call Auth.federatedSignIn method again as it may cause unexpected behavior.`);
 				}
-			} catch (e) { }
+			} catch (e) {}
 
 			const { token, identity_id, expires_at } = response;
-			// Because Credentials.set would update the user info with identity id
+			// Because this.Credentials.set would update the user info with identity id
 			// So we need to retrieve the user again.
-			const credentials = await Credentials.set(
+			const credentials = await this.Credentials.set(
 				{ provider, token, identity_id, user, expires_at },
 				'federation'
 			);
@@ -1794,122 +1876,139 @@ export class AuthClass {
 	 * @param {String} URL - optional parameter for customers to pass in the response URL
 	 */
 	private async _handleAuthResponse(URL?: string) {
-		if (!this._config.userPoolId) {
-			throw new Error(`OAuth responses require a User Pool defined in config`);
+		if (this.oAuthFlowInProgress) {
+			logger.debug(`Skipping URL ${URL} current flow in progress`);
+			return;
 		}
 
-		dispatchAuthEvent(
-			'parsingCallbackUrl',
-			{ url: URL },
-			`The callback url is being parsed`
-		);
+		try {
+			this.oAuthFlowInProgress = true;
+			if (!this._config.userPoolId) {
+				throw new Error(
+					`OAuth responses require a User Pool defined in config`
+				);
+			}
 
-		const currentUrl =
-			URL || (JS.browserOrNode().isBrowser ? window.location.href : '');
+			dispatchAuthEvent(
+				'parsingCallbackUrl',
+				{ url: URL },
+				`The callback url is being parsed`
+			);
 
-		const hasCodeOrError = !!(parse(currentUrl).query || '')
-			.split('&')
-			.map(entry => entry.split('='))
-			.find(([k]) => k === 'code' || k === 'error');
+			const currentUrl =
+				URL || (JS.browserOrNode().isBrowser ? window.location.href : '');
 
-		const hasTokenOrError = !!(parse(currentUrl).hash || '#')
-			.substr(1)
-			.split('&')
-			.map(entry => entry.split('='))
-			.find(([k]) => k === 'access_token' || k === 'error');
+			const hasCodeOrError = !!(parse(currentUrl).query || '')
+				.split('&')
+				.map(entry => entry.split('='))
+				.find(([k]) => k === 'code' || k === 'error');
 
-		if (hasCodeOrError || hasTokenOrError) {
-			this._storage.setItem('amplify-redirected-from-hosted-ui', 'true');
-			try {
-				const {
-					accessToken,
-					idToken,
-					refreshToken,
-					state,
-				} = await this._oAuthHandler.handleAuthResponse(currentUrl);
-				const session = new CognitoUserSession({
-					IdToken: new CognitoIdToken({ IdToken: idToken }),
-					RefreshToken: new CognitoRefreshToken({ RefreshToken: refreshToken }),
-					AccessToken: new CognitoAccessToken({ AccessToken: accessToken }),
-				});
+			const hasTokenOrError = !!(parse(currentUrl).hash || '#')
+				.substr(1)
+				.split('&')
+				.map(entry => entry.split('='))
+				.find(([k]) => k === 'access_token' || k === 'error');
 
-				let credentials;
-				// Get AWS Credentials & store if Identity Pool is defined
-				if (this._config.identityPoolId) {
-					credentials = await Credentials.set(session, 'session');
-					logger.debug('AWS credentials', credentials);
-				}
+			if (hasCodeOrError || hasTokenOrError) {
+				this._storage.setItem('amplify-redirected-from-hosted-ui', 'true');
+				try {
+					const {
+						accessToken,
+						idToken,
+						refreshToken,
+						state,
+					} = await this._oAuthHandler.handleAuthResponse(currentUrl);
+					const session = new CognitoUserSession({
+						IdToken: new CognitoIdToken({ IdToken: idToken }),
+						RefreshToken: new CognitoRefreshToken({
+							RefreshToken: refreshToken,
+						}),
+						AccessToken: new CognitoAccessToken({
+							AccessToken: accessToken,
+						}),
+					});
 
-				/* 
+					let credentials;
+					// Get AWS Credentials & store if Identity Pool is defined
+					if (this._config.identityPoolId) {
+						credentials = await this.Credentials.set(session, 'session');
+						logger.debug('AWS credentials', credentials);
+					}
+
+					/* 
 				Prior to the request we do sign the custom state along with the state we set. This check will verify
 				if there is a dash indicated when setting custom state from the request. If a dash is contained
 				then there is custom state present on the state string.
 				*/
-				const isCustomStateIncluded = /-/.test(state);
+					const isCustomStateIncluded = /-/.test(state);
 
-				/*
+					/*
 				The following is to create a user for the Cognito Identity SDK to store the tokens
 				When we remove this SDK later that logic will have to be centralized in our new version
 				*/
-				//#region
-				const currentUser = this.createCognitoUser(
-					session.getIdToken().decodePayload()['cognito:username']
-				);
-				dispatchAuthEvent(
-					'signIn',
-					currentUser,
-					`A user ${currentUser.getUsername()} has been signed in`
-				);
-				dispatchAuthEvent(
-					'cognitoHostedUI',
-					currentUser,
-					`A user ${currentUser.getUsername()} has been signed in via Cognito Hosted UI`
-				);
+					//#region
+					const currentUser = this.createCognitoUser(
+						session.getIdToken().decodePayload()['cognito:username']
+					);
 
-				if (isCustomStateIncluded) {
-					const customState = state
-						.split('-')
-						.splice(1)
-						.join('-');
+					// This calls cacheTokens() in Cognito SDK
+					currentUser.setSignInUserSession(session);
+
+					if (window && typeof window.history !== 'undefined') {
+						window.history.replaceState(
+							{},
+							null,
+							(this._config.oauth as AwsCognitoOAuthOpts).redirectSignIn
+						);
+					}
 
 					dispatchAuthEvent(
-						'customOAuthState',
-						customState,
-						`State for user ${currentUser.getUsername()}`
+						'signIn',
+						currentUser,
+						`A user ${currentUser.getUsername()} has been signed in`
+					);
+					dispatchAuthEvent(
+						'cognitoHostedUI',
+						currentUser,
+						`A user ${currentUser.getUsername()} has been signed in via Cognito Hosted UI`
+					);
+
+					if (isCustomStateIncluded) {
+						const customState = state
+							.split('-')
+							.splice(1)
+							.join('-');
+
+						dispatchAuthEvent(
+							'customOAuthState',
+							urlSafeDecode(customState),
+							`State for user ${currentUser.getUsername()}`
+						);
+					}
+					//#endregion
+
+					return credentials;
+				} catch (err) {
+					logger.debug('Error in cognito hosted auth response', err);
+					dispatchAuthEvent(
+						'signIn_failure',
+						err,
+						`The OAuth response flow failed`
+					);
+					dispatchAuthEvent(
+						'cognitoHostedUI_failure',
+						err,
+						`A failure occurred when returning to the Cognito Hosted UI`
+					);
+					dispatchAuthEvent(
+						'customState_failure',
+						err,
+						`A failure occurred when returning state`
 					);
 				}
-
-				// This calls cacheTokens() in Cognito SDK
-				currentUser.setSignInUserSession(session);
-				//#endregion
-
-				if (window && typeof window.history !== 'undefined') {
-					window.history.replaceState(
-						{},
-						null,
-						(this._config.oauth as AwsCognitoOAuthOpts).redirectSignIn
-					);
-				}
-
-				return credentials;
-			} catch (err) {
-				logger.debug('Error in cognito hosted auth response', err);
-				dispatchAuthEvent(
-					'signIn_failure',
-					err,
-					`The OAuth response flow failed`
-				);
-				dispatchAuthEvent(
-					'cognitoHostedUI_failure',
-					err,
-					`A failure occurred when returning to the Cognito Hosted UI`
-				);
-				dispatchAuthEvent(
-					'customState_failure',
-					err,
-					`A failure occurred when returning state`
-				);
 			}
+		} finally {
+			this.oAuthFlowInProgress = false;
 		}
 	}
 
@@ -1932,10 +2031,12 @@ export class AuthClass {
 		const obj = {};
 		if (attributes) {
 			attributes.map(attribute => {
-				if (attribute.Value === 'true') {
-					obj[attribute.Name] = true;
-				} else if (attribute.Value === 'false') {
-					obj[attribute.Name] = false;
+				if (
+					attribute.Name === 'email_verified' ||
+					attribute.Name === 'phone_number_verified'
+				) {
+					obj[attribute.Name] =
+						attribute.Value === 'true' || attribute.Value === true;
 				} else {
 					obj[attribute.Name] = attribute.Value;
 				}
@@ -1991,3 +2092,5 @@ export class AuthClass {
 }
 
 export const Auth = new AuthClass(null);
+
+Amplify.register(Auth);

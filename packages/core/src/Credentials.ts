@@ -2,6 +2,7 @@ import { ConsoleLogger as Logger } from './Logger';
 import { StorageHelper } from './StorageHelper';
 import { makeQuerablePromise } from './JS';
 import { FacebookOAuth, GoogleOAuth } from './OAuthHelper';
+import { jitteredExponentialRetry } from './Util';
 import { ICredentials } from './types';
 import { getAmplifyUserAgent } from './Platform';
 import { Amplify } from './Amplify';
@@ -32,10 +33,17 @@ export class CredentialsClass {
 	private _identityId;
 	private _nextCredentialsRefresh: Number;
 
+	// Allow `Auth` to be injected for SSR, but Auth isn't a required dependency for Credentials
+	Auth = undefined;
+
 	constructor(config) {
 		this.configure(config);
 		this._refreshHandlers['google'] = GoogleOAuth.refreshGoogleToken;
 		this._refreshHandlers['facebook'] = FacebookOAuth.refreshFacebookToken;
+	}
+
+	public getModuleName() {
+		return 'Credentials';
 	}
 
 	public getCredSource() {
@@ -50,10 +58,14 @@ export class CredentialsClass {
 		// If the developer has provided an object of refresh handlers,
 		// then we can merge the provided handlers with the current handlers.
 		if (refreshHandlers) {
-			this._refreshHandlers = { ...this._refreshHandlers, ...refreshHandlers };
+			this._refreshHandlers = {
+				...this._refreshHandlers,
+				...refreshHandlers,
+			};
 		}
 
 		this._storage = this._config.storage;
+
 		if (!this._storage) {
 			this._storage = new StorageHelper().getStorage();
 		}
@@ -91,11 +103,13 @@ export class CredentialsClass {
 		}
 
 		logger.debug('need to get a new credential or refresh the existing one');
-		if (
-			Amplify.Auth &&
-			typeof Amplify.Auth.currentUserCredentials === 'function'
-		) {
-			return Amplify.Auth.currentUserCredentials();
+
+		// Some use-cases don't require Auth for signing in, but use Credentials for guest users (e.g. Analytics)
+		// Prefer locally scoped `Auth`, but fallback to registered `Amplify.Auth` global otherwise.
+		const { Auth = Amplify.Auth } = this;
+
+		if (Auth && typeof Auth.currentUserCredentials === 'function') {
+			return Auth.currentUserCredentials();
 		} else {
 			return Promise.reject('No Auth module registered in Amplify');
 		}
@@ -103,9 +117,8 @@ export class CredentialsClass {
 
 	public refreshFederatedToken(federatedInfo) {
 		logger.debug('Getting federated credentials');
-		const { provider, user } = federatedInfo;
-		let token = federatedInfo.token;
-		let expires_at = federatedInfo.expires_at;
+		const { provider, user, token, identity_id } = federatedInfo;
+		let { expires_at } = federatedInfo;
 
 		// Make sure expires_at is in millis
 		expires_at =
@@ -122,6 +135,7 @@ export class CredentialsClass {
 				provider,
 				token,
 				user,
+				identity_id,
 				expires_at,
 			});
 		} else {
@@ -131,30 +145,46 @@ export class CredentialsClass {
 				typeof that._refreshHandlers[provider] === 'function'
 			) {
 				logger.debug('getting refreshed jwt token from federation provider');
-				return that._refreshHandlers[provider]()
-					.then(data => {
-						logger.debug('refresh federated token sucessfully', data);
-						token = data.token;
-						expires_at = data.expires_at;
-
-						return that._setCredentialsFromFederation({
-							provider,
-							token,
-							user,
-							expires_at,
-						});
-					})
-					.catch(e => {
-						logger.debug('refresh federated token failed', e);
-						this.clear();
-						return Promise.reject('refreshing federation token failed: ' + e);
-					});
+				return this._providerRefreshWithRetry({
+					refreshHandler: that._refreshHandlers[provider],
+					provider,
+					user,
+				});
 			} else {
 				logger.debug('no refresh handler for provider:', provider);
 				this.clear();
 				return Promise.reject('no refresh handler for provider');
 			}
 		}
+	}
+
+	private _providerRefreshWithRetry({ refreshHandler, provider, user }) {
+		const MAX_DELAY_MS = 10 * 1000;
+		// refreshHandler will retry network errors, otherwise it will
+		// return NonRetryableError to break out of jitteredExponentialRetry
+		return jitteredExponentialRetry(refreshHandler, [], MAX_DELAY_MS)
+			.then(data => {
+				logger.debug('refresh federated token sucessfully', data);
+				return this._setCredentialsFromFederation({
+					provider,
+					token: data.token,
+					user,
+					identity_id: data.identity_id,
+					expires_at: data.expires_at,
+				});
+			})
+			.catch(e => {
+				const isNetworkError =
+					typeof e === 'string' &&
+					e.toLowerCase().lastIndexOf('network error', e.length) === 0;
+
+				if (!isNetworkError) {
+					this.clear();
+				}
+
+				logger.debug('refresh federated token failed', e);
+				return Promise.reject('refreshing federation token failed: ' + e);
+			});
 	}
 
 	private _isExpired(credentials): boolean {
@@ -208,20 +238,18 @@ export class CredentialsClass {
 		try {
 			await this._storageSync;
 			identityId = this._storage.getItem('CognitoIdentityId-' + identityPoolId);
+			this._identityId = identityId;
 		} catch (e) {
 			logger.debug('Failed to get the cached identityId', e);
 		}
 
-		// Removing the signature middleware and passing empty credentials and signer
-		// because https://github.com/aws/aws-sdk-js-v3/issues/354
 		const cognitoClient = new CognitoIdentityClient({
 			region,
-			credentials: () => Promise.resolve({} as any),
 			customUserAgent: getAmplifyUserAgent(),
 		});
 
 		let credentials = undefined;
-		if (identityId && identityId !== 'undefined') {
+		if (identityId) {
 			const cognitoIdentityParams: FromCognitoIdentityParameters = {
 				identityId,
 				client: cognitoClient,
@@ -263,12 +291,47 @@ export class CredentialsClass {
 				return res;
 			})
 			.catch(async e => {
-				return e;
+				// If identity id is deleted in the console, we make one attempt to recreate it
+				// and remove existing id from cache.
+				if (
+					e.name === 'ResourceNotFoundException' &&
+					e.message === `Identity '${identityId}' not found.`
+				) {
+					logger.debug('Failed to load guest credentials');
+					this._storage.removeItem('CognitoIdentityId-' + identityPoolId);
+
+					const credentialsProvider: CredentialProvider = async () => {
+						const { IdentityId } = await cognitoClient.send(
+							new GetIdCommand({
+								IdentityPoolId: identityPoolId,
+							})
+						);
+						this._identityId = IdentityId;
+						const cognitoIdentityParams: FromCognitoIdentityParameters = {
+							client: cognitoClient,
+							identityId: IdentityId,
+						};
+
+						const credentialsFromCognitoIdentity = fromCognitoIdentity(
+							cognitoIdentityParams
+						);
+
+						return credentialsFromCognitoIdentity();
+					};
+
+					credentials = credentialsProvider().catch(async err => {
+						throw err;
+					});
+
+					return this._loadCredentials(credentials, 'guest', false, null);
+				} else {
+					return e;
+				}
 			});
 	}
 
 	private _setCredentialsFromFederation(params) {
-		const { provider, token } = params;
+		const { provider, token, identity_id } = params;
 		const domains = {
 			google: 'accounts.google.com',
 			facebook: 'graph.facebook.com',
@@ -297,20 +360,27 @@ export class CredentialsClass {
 			);
 		}
 
-		// Removing the signature middleware and passing empty credentials and signer
-		// because https://github.com/aws/aws-sdk-js-v3/issues/354
 		const cognitoClient = new CognitoIdentityClient({
 			region,
-			credentials: () => Promise.resolve({} as any),
 			customUserAgent: getAmplifyUserAgent(),
 		});
-		const cognitoIdentityParams: FromCognitoIdentityPoolParameters = {
-			logins,
-			identityPoolId,
-			client: cognitoClient,
-		};
-		const credentials = fromCognitoIdentityPool(cognitoIdentityParams)();
 
+		let credentials = undefined;
+		if (identity_id) {
+			const cognitoIdentityParams: FromCognitoIdentityParameters = {
+				identityId: identity_id,
+				logins,
+				client: cognitoClient,
+			};
+			credentials = fromCognitoIdentity(cognitoIdentityParams)();
+		} else {
+			const cognitoIdentityParams: FromCognitoIdentityPoolParameters = {
+				logins,
+				identityPoolId,
+				client: cognitoClient,
+			};
+			credentials = fromCognitoIdentityPool(cognitoIdentityParams)();
+		}
 		return this._loadCredentials(credentials, 'federated', true, params);
 	}
 
@@ -332,11 +402,8 @@ export class CredentialsClass {
 		const logins = {};
 		logins[key] = idToken;
 
-		// Removing the signature middleware and passing empty credentials and signer
-		// because https://github.com/aws/aws-sdk-js-v3/issues/354
 		const cognitoClient = new CognitoIdentityClient({
 			region,
-			credentials: () => Promise.resolve({} as any),
 			customUserAgent: getAmplifyUserAgent(),
 		});
 
@@ -396,8 +463,11 @@ export class CredentialsClass {
 					that._credentials_source = source;
 					that._nextCredentialsRefresh = new Date().getTime() + CREDENTIALS_TTL;
 					if (source === 'federated') {
-						const user = info.user;
-						const { provider, token, expires_at } = info;
+						const user = Object.assign(
+							{ id: this._credentials.identityId },
+							info.user
+						);
+						const { provider, token, expires_at, identity_id } = info;
 						try {
 							this._storage.setItem(
 								'aws-amplify-federatedInfo',
@@ -406,6 +476,7 @@ export class CredentialsClass {
 									token,
 									user,
 									expires_at,
+									identity_id,
 								})
 							);
 						} catch (e) {
@@ -429,6 +500,7 @@ export class CredentialsClass {
 				.catch(err => {
 					if (err) {
 						logger.debug('Failed to load credentials', credentials);
+						logger.debug('Error loading credentials', err);
 						rej(err);
 						return;
 					}
@@ -452,6 +524,7 @@ export class CredentialsClass {
 	public async clear() {
 		this._credentials = null;
 		this._credentials_source = null;
+		logger.debug('removing aws-amplify-federatedInfo from storage');
 		this._storage.removeItem('aws-amplify-federatedInfo');
 	}
 
@@ -472,6 +545,8 @@ export class CredentialsClass {
 }
 
 export const Credentials = new CredentialsClass(null);
+
+Amplify.register(Credentials);
 
 /**
  * @deprecated use named import
