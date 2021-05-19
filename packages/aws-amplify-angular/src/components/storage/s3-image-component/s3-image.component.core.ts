@@ -1,5 +1,20 @@
-import { Component, Input, Output, EventEmitter } from '@angular/core';
-import { AmplifyService } from '../../../providers';
+// tslint:disable
+/*
+ * Copyright 2017-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"). You may not use this file except in compliance with
+ * the License. A copy of the License is located at
+ *
+ *     http://aws.amazon.com/apache2.0/
+ *
+ * or in the "license" file accompanying this file. This file is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+ * and limitations under the License.
+ */
+// tslint:enable
+
+import { Component, Input, Output, EventEmitter, OnInit } from '@angular/core';
+import { AmplifyService } from '../../../providers/amplify.service';
 
 const template = `
   <img
@@ -10,41 +25,62 @@ const template = `
 `;
 
 @Component({
-  selector: 'amplify-s3-image-core',
-  template: template
+	selector: 'amplify-s3-image-core',
+	template,
 })
-export class S3ImageComponentCore {
-  url: any;
-  amplifyService: AmplifyService;
+export class S3ImageComponentCore implements OnInit {
+	url: any;
+	_path: string;
+	_options: any = {};
+	protected logger: any;
 
-  @Output()
-  selected: EventEmitter<string> = new EventEmitter<string>();
+	@Output()
+	selected: EventEmitter<string> = new EventEmitter<string>();
 
-  constructor(amplifyService: AmplifyService) {
-    this.amplifyService = amplifyService;
-  }
+	constructor(public amplifyService: AmplifyService) {
+		this.logger = this.amplifyService.logger('S3ImageComponent');
+	}
 
-  onImageClicked() {
-    this.selected.emit(this.url);
-  }
+	@Input()
+	set data(data: any) {
+		if (!data.path) {
+			return;
+		}
+		this._path = data.path;
+		this._options = data.options;
+	}
 
-  @Input()
-  set data(data:any){
-    if (!data.imagePath) { return; }
+	@Input()
+	set path(path: string) {
+		this._path = path;
+	}
 
-    this.amplifyService.storage()
-      .get(data.imagePath)
-      .then(url => this.url = url)
-      .catch(err => console.error(err));
-  }
+	@Input()
+	set options(options: any) {
+		this._options = options;
+	}
 
-  @Input()
-  set path(imagePath: string) {
-    if (!imagePath) { return; }
+	ngOnInit() {
+		if (!this._path) {
+			return;
+		}
+		if (!this.amplifyService.storage()) {
+			throw new Error(
+				'Storage module not registered on AmplifyService provider'
+			);
+		}
+		this.getImage(this._path, this._options);
+	}
 
-    this.amplifyService.storage()
-      .get(imagePath)
-      .then(url => this.url = url)
-      .catch(err => console.error(err));
-  }
+	onImageClicked() {
+		this.selected.emit(this.url);
+	}
+
+	getImage(path, options) {
+		this.amplifyService
+			.storage()
+			.get(path, options)
+			.then(url => (this.url = url))
+			.catch(e => console.error(e));
+	}
 }

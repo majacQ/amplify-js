@@ -11,5 +11,23 @@
  * and limitations under the License.
  */
 export interface InteractionsOptions {
-    [key: string]: any,
+	[key: string]: any;
 }
+
+export type InteractionsTextMessage = {
+	content: string;
+	options: {
+		messageType: 'text';
+	};
+};
+
+export type InteractionsVoiceMessage = {
+	content: object;
+	options: {
+		messageType: 'voice';
+	};
+};
+
+export type InteractionsMessage =
+	| InteractionsTextMessage
+	| InteractionsVoiceMessage;

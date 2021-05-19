@@ -1,7 +1,8 @@
 ---
-layout: blog-detail
+layout: examples
 ---
-## Web Apps with AWS Amplify
+
+# Web Apps with AWS Amplify
 
 #### AWS Amplify helps developers to create high-quality web apps quickly
 
@@ -19,7 +20,7 @@ For Web developers, AWS Amplify provides following main benefits:
 - **UI components** for common operations such as Authorization and Storage
 - **Monitoring** app usage and **engaging** users with campaign analytics
 
-###  Building and Deploying Web Apps with AWS Amplify
+### Building and Deploying Web Apps with AWS Amplify
 
 When building serverless web apps with AWS Amplify, your frontend resources are deployed for hosting, and your app's backend will be handled by cloud services that you integrate.
 
@@ -34,62 +35,61 @@ With AWS Amplify, you can focus more on your app's business logic, and let the s
 As an example, here is how you upload an image to a logged-in user's private storage:
 
 ```js
-    Storage.put('example.png', file, {
-        level: 'private',
-        contentType: 'image/png'
-    })
+Storage.put('example.png', file, {
+	level: 'private',
+	contentType: 'image/png',
+});
 ```
 
 In the example, AWS Amplify Storage category already knows about the authenticated user context, your Amazon S3 buckets and request signing requirements for added security. All the underlying process is managed automatically under the hood, and you get what you want; uploading a user file to a protected location.
 
 #### Command line support
 
-AWS Mobile CLI helps you to configure your app's backend easily. For example, the following command will create a cloud API which is an Amazon API Gateway endpoint:
+Amplify CLI helps you to configure your app's backend easily. For example, the following command will create a cloud API which is an Amazon API Gateway endpoint:
 
 ```bash
-awsmobile cloud-api enable
+amplify add api
 ```
 
-AWS Mobile CLI creates the necessary folder structure and generates JavaScript files for your app's backend:
+Amplify CLI creates the necessary folder structure and generates JavaScript files for your app's backend:
 
-![Performance Results](../images/backend_cloud_api.png?raw=true "Performance Results")
+![Performance Results](../images/backend_cloud_api.png?raw=true 'Performance Results')
 
 After working with your backend code, deploying your app backend is very simple with CLI:
 
 ```bash
-awsmobile push
+amplify push
 ```
 
-#### Manage your Backend with AWS Mobile Hub
+#### Manage your Backend with Amplify CLI
 
 If you have existing AWS resources such as Amazon API Gateway endpoints or Amazon S3 buckets, you can use them with AWS Amplify.
 
-Otherwise, AWS Mobile Hub is a great tool for creating AWS resources, related user roles, and security policies.
+Otherwise, Amplify CLI is a great tool for creating AWS resources, related user roles, and security policies.
 
-Mix and match building blocks for your app, and start implementing cloud operations like Authorization, Storage and Cloud API.  
-
-![Services](../images/mobile_hub_services.png?raw=true "Services")
+Mix and match building blocks for your app, and start implementing cloud operations like Authorization, Storage and Cloud API.
 
 Syncing your latest backend configuration with your local app project is simple with the CLI:
 
 ```bash
-awsmobile pull
+amplify push
 ```
 
 #### Deploy your Web App
 
-AWS Mobile CLI provides a one-line deploy command that pushes your app's static assets to the Content Delivery Network (CDN). This is your apps' hosting environment with media streaming features.
+Amplify CLI provides a one-line deploy command that pushes your app's static assets to the Content Delivery Network (CDN). This is your apps' hosting environment with media streaming features.
 
 Using a CDN dramatically increases your app's loading performance by serving static assets to your users from the nearest edge location.
 
-With AWS Mobile CLI, you can deploy your app with single line command:
+With Amplify CLI, you can deploy your app with single line command:
 
 ```bash
-awsmobile publish
+amplify publish
 ```
+
 Amazon CloudFront will handle the delivery of your static assets to the browser.
 
-![CDN](../images/mobile_hub_cdn.png?raw=true "CDN")
+![CDN](../images/mobile_hub_cdn.png?raw=true 'CDN')
 
 If your web app resources include media files like video or audio, those assets will be automatically streamed to the browser, providing the best user experience.
 
@@ -97,7 +97,7 @@ If your web app resources include media files like video or audio, those assets 
 
 Every time you deploy your app to hosting, a performance test will be automatically executed using real devices. The test results will show the initial load times for your app.
 
-![Performance Results](../images/performance_results.png?raw=true "Performance Results")
+![Performance Results](../images/performance_results.png?raw=true 'Performance Results')
 
 #### Use your Favorite Frontend Library
 
@@ -127,9 +127,9 @@ Also, collecting more data with Analytics category is as simple as;
 Analytics.record('albumVisit', { genre: 'jazz', artist: 'Miles Davis' });
 ```
 
-Analytics events are displayed in Amazon Pinpoint console. In the console, you can create targeted campaigns and push notifications to engage your customers.   
+Analytics events are displayed in Amazon Pinpoint console. In the console, you can create targeted campaigns and push notifications to engage your customers.
 
-![Pinpoint](../images/pinpoint_analytics.png?raw=true "Pinpoint")
+![Pinpoint](../images/pinpoint_analytics.png?raw=true 'Pinpoint')
 
 #### Utilities
 
@@ -137,5 +137,5 @@ AWS Amplify comes with additional utility modules that will help you to build be
 
 ### Start Building now!
 
-Start building your Web app today with AWS Amplify by visiting our [Quick Start Guide]({%if jekyll.environment == 'production'%}{{site.amplify.baseurl}}{%endif%}/media/quick_start?utm_source=web-apps&utm_campaign=build-pages).
+Start building your Web app today with AWS Amplify by visiting our [Get Started Guide]({%if jekyll.environment == 'production'%}{{site.amplify.docs_baseurl}}{%endif%}/media/quick_start?utm_source=web-apps&utm_campaign=build-pages).
 {: .next-link .callout .callout--info}

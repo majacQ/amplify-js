@@ -10,16 +10,16 @@
  * CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
  * and limitations under the License.
  */
-import '../Polyfills';
 
-const Linking = {};
-const AppState = {
-    addEventListener(action, handler) {
-        return;
-    }
+import { browserOrNode } from '../JS';
+import { StorageHelper } from '../StorageHelper';
+
+export const Linking = {};
+export const AppState = {
+	addEventListener: (action, handler) => undefined,
 };
 
 // if not in react native, just use local storage
-const AsyncStorage = window.localStorage;
-
-export { Linking, AppState, AsyncStorage };
+export const AsyncStorage = browserOrNode().isBrowser
+	? new StorageHelper().getStorage()
+	: undefined;

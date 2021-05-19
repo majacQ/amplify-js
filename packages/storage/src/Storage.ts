@@ -11,343 +11,231 @@
  * and limitations under the License.
  */
 
-import {
-    AWS,
-    ConsoleLogger as Logger,
-    Hub,
-    Credentials
-} from '@aws-amplify/core';
-import * as S3 from 'aws-sdk/clients/s3';
-import { StorageOptions } from './types';
+import { ConsoleLogger as Logger, Parser } from '@aws-amplify/core';
+import { AWSS3Provider } from './providers';
+import { StorageProvider } from './types';
 
 const logger = new Logger('StorageClass');
 
-const dispatchStorageEvent = (track, attrs, metrics) => {
-    if (track) {
-        Hub.dispatch('storage', { attrs, metrics }, 'Storage');
-    }
-};
-
+const DEFAULT_PROVIDER = 'AWSS3';
 /**
  * Provide storage methods to use AWS S3
  */
-export default class StorageClass {
-    /**
-     * @private
-     */
-    private _options;
+export class Storage {
+	/**
+	 * @private
+	 */
+	private _config;
+	private _pluggables: StorageProvider[];
 
-    /**
-     * @public
-     */
-    public vault: StorageClass;
+	/**
+	 * @public
+	 */
+	public vault: Storage;
 
-    /**
-     * Initialize Storage with AWS configurations
-     * @param {Object} options - Configuration object for storage
-     */
-    constructor(options: StorageOptions) {
-        this._options = options;
-        logger.debug('Storage Options', this._options);
-    }
+	/**
+	 * Initialize Storage
+	 * @param {Object} config - Configuration object for storage
+	 */
+	constructor() {
+		this._config = {};
+		this._pluggables = [];
+		logger.debug('Storage Options', this._config);
 
-    public getModuleName() {
-        return 'Storage';
-    }
+		this.get = this.get.bind(this);
+		this.put = this.put.bind(this);
+		this.remove = this.remove.bind(this);
+		this.list = this.list.bind(this);
+	}
 
-    /**
-     * Configure Storage part with aws configuration
-     * @param {Object} config - Configuration of the Storage
-     * @return {Object} - Current configuration
-     */
-    configure(options?) {
-        logger.debug('configure Storage');
-        let opt = options ? options.Storage || options : {};
+	public getModuleName() {
+		return 'Storage';
+	}
 
-        if (options['aws_user_files_s3_bucket']) {
-            opt = {
-                bucket: options['aws_user_files_s3_bucket'],
-                region: options['aws_user_files_s3_bucket_region']
-            };
-        }
-        this._options = Object.assign({}, this._options, opt);
-        if (!this._options.bucket) { logger.debug('Do not have bucket yet'); }
+	/**
+	 * add plugin into Storage category
+	 * @param {Object} pluggable - an instance of the plugin
+	 */
+	public addPluggable(pluggable: StorageProvider) {
+		if (pluggable && pluggable.getCategory() === 'Storage') {
+			this._pluggables.push(pluggable);
+			let config = {};
 
-        return this._options;
-    }
+			config = pluggable.configure(this._config[pluggable.getProviderName()]);
 
-    /**
-    * Get a presigned URL of the file
-    * @param {String} key - key of the object
-    * @param {Object} [options] - { level : private|protected|public }
-    * @return - A promise resolves to Amazon S3 presigned URL on success
-    */
-    public async get(key: string, options?): Promise<Object> {
-        const credentialsOK = await this._ensureCredentials();
-        if (!credentialsOK) { return Promise.reject('No credentials'); }
+			return config;
+		}
+	}
 
-        const opt = Object.assign({}, this._options, options);
-        const { bucket, region, credentials, level, download, track, expires } = opt;
+	/**
+	 * Get the plugin object
+	 * @param providerName - the name of the plugin
+	 */
+	public getPluggable(providerName: string) {
+		const pluggable = this._pluggables.find(
+			pluggable => pluggable.getProviderName() === providerName
+		);
+		if (pluggable === undefined) {
+			logger.debug('No plugin found with providerName', providerName);
+			return null;
+		} else return pluggable;
+	}
 
-        const prefix = this._prefix(opt);
-        const final_key = prefix + key;
-        const s3 = this._createS3(opt);
-        logger.debug('get ' + key + ' from ' + final_key);
+	/**
+	 * Remove the plugin object
+	 * @param providerName - the name of the plugin
+	 */
+	public removePluggable(providerName: string) {
+		this._pluggables = this._pluggables.filter(
+			pluggable => pluggable.getProviderName() !== providerName
+		);
+		return;
+	}
 
-        const params: any = {
-            Bucket: bucket,
-            Key: final_key
-        };
+	/**
+	 * Configure Storage
+	 * @param {Object} config - Configuration object for storage
+	 * @return {Object} - Current configuration
+	 */
+	configure(config?) {
+		logger.debug('configure Storage');
+		if (!config) return this._config;
 
-        if (download === true) {
-            return new Promise<any>((res, rej) => {
-                s3.getObject(params, (err, data) => {
-                    if (err) {
-                        dispatchStorageEvent(
-                            track,
-                            { method: 'get', result: 'failed' },
-                            null);
-                        rej(err);
-                    } else {
-                        dispatchStorageEvent(
-                            track,
-                            { method: 'get', result: 'success' },
-                            { fileSize: Number(data.Body['length']) });
-                        res(data);
-                    }
-                });
-            });
-        }
+		const amplifyConfig = Parser.parseMobilehubConfig(config);
 
-        if (expires) { params.Expires = expires; }
+		const storageKeysFromConfig = Object.keys(amplifyConfig.Storage);
 
-        return new Promise<string>((res, rej) => {
-            try {
-                const url = s3.getSignedUrl('getObject', params);
-                dispatchStorageEvent(
-                    track,
-                    { method: 'get', result: 'success' },
-                    null);
-                res(url);
-            } catch (e) {
-                logger.warn('get signed url error', e);
-                dispatchStorageEvent(
-                    track,
-                    { method: 'get', result: 'failed' },
-                    null);
-                rej(e);
-            }
-        });
-    }
+		const storageArrayKeys = [
+			'bucket',
+			'region',
+			'level',
+			'track',
+			'customPrefix',
+			'serverSideEncryption',
+			'SSECustomerAlgorithm',
+			'SSECustomerKey',
+			'SSECustomerKeyMD5',
+			'SSEKMSKeyId',
+		];
 
-    /**
-     * Put a file in S3 bucket specified to configure method
-     * @param {Stirng} key - key of the object
-     * @param {Object} object - File to be put in Amazon S3 bucket
-     * @param {Object} [options] - { level : private|protected|public, contentType: MIME Types }
-     * @return - promise resolves to object on success
-     */
-    public async put(key: string, object, options?): Promise<Object> {
-        const credentialsOK = await this._ensureCredentials();
-        if (!credentialsOK) { return Promise.reject('No credentials'); }
+		const isInStorageArrayKeys = (k: string) =>
+			storageArrayKeys.some(x => x === k);
+		const checkConfigKeysFromArray = (k: string[]) =>
+			k.find(k => isInStorageArrayKeys(k));
 
-        const opt = Object.assign({}, this._options, options);
-        const { bucket, region, credentials, level, track } = opt;
-        const { contentType, contentDisposition, cacheControl, expires, metadata } = opt;
-        const type = contentType ? contentType : 'binary/octet-stream';
+		if (
+			storageKeysFromConfig &&
+			checkConfigKeysFromArray(storageKeysFromConfig) &&
+			!amplifyConfig.Storage[DEFAULT_PROVIDER]
+		) {
+			amplifyConfig.Storage[DEFAULT_PROVIDER] = {};
+		}
 
-        const prefix = this._prefix(opt);
-        const final_key = prefix + key;
-        const s3 = this._createS3(opt);
-        logger.debug('put ' + key + ' to ' + final_key);
+		Object.entries(amplifyConfig.Storage).map(([key, value]) => {
+			if (key && isInStorageArrayKeys(key) && value !== undefined) {
+				amplifyConfig.Storage[DEFAULT_PROVIDER][key] = value;
+				delete amplifyConfig.Storage[key];
+			}
+		});
 
-        const params: any = {
-            Bucket: bucket,
-            Key: final_key,
-            Body: object,
-            ContentType: type
-        };
-        if (cacheControl) { params.CacheControl = cacheControl; }
-        if (contentDisposition) { params.ContentDisposition = contentDisposition; }
-        if (expires) { params.Expires = expires; }
-        if (metadata) { params.Metadata = metadata; }
+		// only update new values for each provider
+		Object.keys(amplifyConfig.Storage).forEach(providerName => {
+			if (typeof amplifyConfig.Storage[providerName] !== 'string') {
+				this._config[providerName] = {
+					...this._config[providerName],
+					...amplifyConfig.Storage[providerName],
+				};
+			}
+		});
 
-        return new Promise<Object>((res, rej) => {
-            s3.upload(params, (err, data) => {
-                if (err) {
-                    logger.warn("error uploading", err);
-                    dispatchStorageEvent(
-                        track,
-                        { method: 'put', result: 'failed' },
-                        null);
-                    rej(err);
-                } else {
-                    logger.debug('upload result', data);
-                    dispatchStorageEvent(
-                        track,
-                        { method: 'put', result: 'success' },
-                        null);
-                    res({
-                        key: data.Key.substr(prefix.length)
-                    });
-                }
-            });
-        });
-    }
+		this._pluggables.forEach(pluggable => {
+			pluggable.configure(this._config[pluggable.getProviderName()]);
+		});
 
-    /**
-     * Remove the object for specified key
-     * @param {String} key - key of the object
-     * @param {Object} [options] - { level : private|protected|public }
-     * @return - Promise resolves upon successful removal of the object
-     */
-    public async remove(key: string, options?): Promise<any> {
-        const credentialsOK = await this._ensureCredentials();
-        if (!credentialsOK) { return Promise.reject('No credentials'); }
+		if (this._pluggables.length === 0) {
+			this.addPluggable(new AWSS3Provider());
+		}
 
-        const opt = Object.assign({}, this._options, options, );
-        const { bucket, region, credentials, level, track } = opt;
+		return this._config;
+	}
 
-        const prefix = this._prefix(opt);
-        const final_key = prefix + key;
-        const s3 = this._createS3(opt);
-        logger.debug('remove ' + key + ' from ' + final_key);
+	/**
+	 * Get a presigned URL of the file or the object data when download:true
+	 *
+	 * @param {string} key - key of the object
+	 * @param {Object} [config] - { level : private|protected|public, download: true|false }
+	 * @return - A promise resolves to either a presigned url or the object
+	 */
+	public async get(key: string, config?): Promise<String | Object> {
+		const { provider = DEFAULT_PROVIDER } = config || {};
+		const prov = this._pluggables.find(
+			pluggable => pluggable.getProviderName() === provider
+		);
+		if (prov === undefined) {
+			logger.debug('No plugin found with providerName', provider);
+			Promise.reject('No plugin found in Storage for the provider');
+		}
+		return prov.get(key, config);
+	}
 
-        const params = {
-            Bucket: bucket,
-            Key: final_key
-        };
+	/**
+	 * Put a file in storage bucket specified to configure method
+	 * @param {string} key - key of the object
+	 * @param {Object} object - File to be put in bucket
+	 * @param {Object} [config] - { level : private|protected|public, contentType: MIME Types,
+	 *  progressCallback: function }
+	 * @return - promise resolves to object on success
+	 */
+	public async put(key: string, object, config?): Promise<Object> {
+		const { provider = DEFAULT_PROVIDER } = config || {};
+		const prov = this._pluggables.find(
+			pluggable => pluggable.getProviderName() === provider
+		);
+		if (prov === undefined) {
+			logger.debug('No plugin found with providerName', provider);
+			Promise.reject('No plugin found in Storage for the provider');
+		}
+		return prov.put(key, object, config);
+	}
 
-        return new Promise<any>((res, rej) => {
-            s3.deleteObject(params, (err, data) => {
-                if (err) {
-                    dispatchStorageEvent(
-                        track,
-                        { method: 'remove', result: 'failed' },
-                        null);
-                    rej(err);
-                } else {
-                    dispatchStorageEvent(
-                        track,
-                        { method: 'remove', result: 'success' },
-                        null);
-                    res(data);
-                }
-            });
-        });
-    }
+	/**
+	 * Remove the object for specified key
+	 * @param {string} key - key of the object
+	 * @param {Object} [config] - { level : private|protected|public }
+	 * @return - Promise resolves upon successful removal of the object
+	 */
+	public async remove(key: string, config?): Promise<any> {
+		const { provider = DEFAULT_PROVIDER } = config || {};
+		const prov = this._pluggables.find(
+			pluggable => pluggable.getProviderName() === provider
+		);
+		if (prov === undefined) {
+			logger.debug('No plugin found with providerName', provider);
+			Promise.reject('No plugin found in Storage for the provider');
+		}
+		return prov.remove(key, config);
+	}
 
-    /**
-     * List bucket objects relative to the level and prefix specified
-     * @param {String} path - the path that contains objects
-     * @param {Object} [options] - { level : private|protected|public }
-     * @return - Promise resolves to list of keys for all objects in path
-     */
-    public async list(path, options?): Promise<any> {
-        const credentialsOK = await this._ensureCredentials();
-        if (!credentialsOK) { return Promise.reject('No credentials'); }
-
-        const opt = Object.assign({}, this._options, options);
-        const { bucket, region, credentials, level, download, track } = opt;
-
-        const prefix = this._prefix(opt);
-        const final_path = prefix + path;
-        const s3 = this._createS3(opt);
-        logger.debug('list ' + path + ' from ' + final_path);
-
-        const params = {
-            Bucket: bucket,
-            Prefix: final_path
-        };
-
-        return new Promise<any>((res, rej) => {
-            s3.listObjects(params, (err, data) => {
-                if (err) {
-                    logger.warn('list error', err);
-                    dispatchStorageEvent(
-                        track,
-                        { method: 'list', result: 'failed' },
-                        null);
-                    rej(err);
-                } else {
-                    const list = data.Contents.map(item => {
-                        return {
-                            key: item.Key.substr(prefix.length),
-                            eTag: item.ETag,
-                            lastModified: item.LastModified,
-                            size: item.Size
-                        };
-                    });
-                    dispatchStorageEvent(
-                        track,
-                        { method: 'list', result: 'success' },
-                        null);
-                    logger.debug('list', list);
-                    res(list);
-                }
-            });
-        });
-    }
-
-    /**
-     * @private
-     */
-    _ensureCredentials() {
-        // commented
-        // will cause bug if another user logged in without refreshing page
-        // if (this._options.credentials) { return Promise.resolve(true); }
-
-        return Credentials.get()
-            .then(credentials => {
-                if (!credentials) return false;
-                const cred = Credentials.shear(credentials);
-                logger.debug('set credentials for storage', cred);
-                this._options.credentials = cred;
-
-                return true;
-            })
-            .catch(err => {
-                logger.warn('ensure credentials error', err);
-                return false;
-            });
-    }
-
-    /**
-     * @private
-     */
-    private _prefix(options) {
-        const { credentials, level } = options;
-
-        const customPrefix = options.customPrefix || {};
-        const identityId = options.identityId || credentials.identityId;
-        const privatePath = (customPrefix.private !== undefined ? customPrefix.private : 'private/') + identityId + '/';
-        const protectedPath = (customPrefix.protected !== undefined ?
-            customPrefix.protected : 'protected/') + identityId + '/';
-        const publicPath = customPrefix.public !== undefined ? customPrefix.public : 'public/';
-
-        switch (level) {
-            case 'private':
-                return privatePath;
-            case 'protected':
-                return protectedPath;
-            default:
-                return publicPath;
-        }
-    }
-
-    /**
-     * @private
-     */
-    private _createS3(options) {
-        const { bucket, region, credentials } = options;
-        AWS.config.update({
-            region,
-            credentials
-        });
-        return new S3({
-            apiVersion: '2006-03-01',
-            params: { Bucket: bucket },
-            region
-        });
-    }
+	/**
+	 * List bucket objects relative to the level and prefix specified
+	 * @param {String} path - the path that contains objects
+	 * @param {Object} [config] - { level : private|protected|public, maxKeys: NUMBER }
+	 * @return - Promise resolves to list of keys for all objects in path
+	 */
+	public async list(path, config?): Promise<any> {
+		const { provider = DEFAULT_PROVIDER } = config || {};
+		const prov = this._pluggables.find(
+			pluggable => pluggable.getProviderName() === provider
+		);
+		if (prov === undefined) {
+			logger.debug('No plugin found with providerName', provider);
+			Promise.reject('No plugin found in Storage for the provider');
+		}
+		return prov.list(path, config);
+	}
 }
+
+/**
+ * @deprecated use named import
+ */
+export default Storage;
